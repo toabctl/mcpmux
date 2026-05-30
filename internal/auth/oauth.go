@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Thomas Bechtold <thomasbechtold@jpberlin.de>
+// SPDX-License-Identifier: Apache-2.0
+
 package auth
 
 import (
@@ -58,8 +61,8 @@ func NewOAuthHandler(ctx context.Context, log *slog.Logger, o OAuthOptions) (sdk
 
 	cfg := &sdkauth.AuthorizationCodeHandlerConfig{
 		DynamicClientRegistrationConfig: &sdkauth.DynamicClientRegistrationConfig{Metadata: meta},
-		RedirectURL:              ba.redirect,
-		AuthorizationCodeFetcher: ba.fetch,
+		RedirectURL:                     ba.redirect,
+		AuthorizationCodeFetcher:        ba.fetch,
 	}
 	h, err := sdkauth.NewAuthorizationCodeHandler(cfg)
 	if err != nil {
@@ -130,11 +133,11 @@ func (a *browserAuthorizer) handleCallback(w http.ResponseWriter, r *http.Reques
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	switch {
 	case res.errMsg != "":
-		fmt.Fprintf(w, callbackPage, "Authorization failed", html.EscapeString(res.errMsg))
+		_, _ = fmt.Fprintf(w, callbackPage, "Authorization failed", html.EscapeString(res.errMsg))
 	case delivered:
-		fmt.Fprintf(w, callbackPage, "Authorization complete", "You can close this tab and return to mcpmux.")
+		_, _ = fmt.Fprintf(w, callbackPage, "Authorization complete", "You can close this tab and return to mcpmux.")
 	default:
-		fmt.Fprintf(w, callbackPage, "No authorization in progress", "You can close this tab.")
+		_, _ = fmt.Fprintf(w, callbackPage, "No authorization in progress", "You can close this tab.")
 	}
 }
 
@@ -152,8 +155,8 @@ func (a *browserAuthorizer) fetch(ctx context.Context, args *sdkauth.Authorizati
 		a.mu.Unlock()
 	}()
 
-	a.log.Info("backend authorization required", "backend", a.label, "url", args.URL)
-	fmt.Fprintf(os.Stderr, "\n[mcpmux] authorize %q — open this URL if it does not open automatically:\n  %s\n\n", a.label, args.URL)
+	a.log.Info("backend authorization required (open the URL if a browser did not)",
+		"backend", a.label, "url", args.URL)
 	if a.open {
 		if err := a.openURL(args.URL); err != nil {
 			a.log.Warn("could not open browser automatically", "backend", a.label, "err", err)

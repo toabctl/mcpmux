@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Thomas Bechtold <thomasbechtold@jpberlin.de>
+// SPDX-License-Identifier: Apache-2.0
+
 package auth
 
 import (
@@ -36,7 +39,7 @@ func driveCallback(t *testing.T, query string) (*sdkauth.AuthorizationResult, er
 
 	for i := 0; i < 200; i++ {
 		if resp, err := http.Get(a.redirect + "?" + query); err == nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 		select {
 		case res := <-done:

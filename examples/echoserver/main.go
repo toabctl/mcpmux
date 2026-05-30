@@ -1,10 +1,14 @@
+// SPDX-FileCopyrightText: 2026 Thomas Bechtold <thomasbechtold@jpberlin.de>
+// SPDX-License-Identifier: Apache-2.0
+
 // Command echoserver is a trivial stdio MCP server used to smoke-test mcpmux.
 // It exposes a single "echo" tool that returns its "text" argument.
 package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
+	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -23,6 +27,7 @@ func main() {
 	server := mcp.NewServer(&mcp.Implementation{Name: "echoserver", Version: "v0.1.0"}, nil)
 	mcp.AddTool(server, &mcp.Tool{Name: "echo", Description: "echo back the given text"}, echo)
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
-		log.Fatal(err)
+		slog.Error("echoserver failed", "err", err)
+		os.Exit(1)
 	}
 }
