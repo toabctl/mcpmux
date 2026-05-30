@@ -15,12 +15,12 @@ backend's credentials and forwards calls to the right backend.
                        └─────────────────────────────────────────┘ ─► backend C (http, custom header)
 ```
 
-## Build
+## Install
 
 ```sh
-make build      # produces ./mcpmux
-# or
-go build -o mcpmux .
+go install github.com/toabctl/mcpmux@latest   # installs `mcpmux`
+# or build from a checkout:
+make build                                     # produces ./mcpmux
 ```
 
 ## Configure
@@ -122,13 +122,18 @@ in the journal.
 
 ## Use from Claude Code
 
-**HTTP transport** (`listen.transport: http`):
+Start mcpmux, then register the single endpoint with Claude Code:
 
 ```sh
+mcpmux serve                                                      # uses ~/.config/mcpmux/config.yaml
 claude mcp add --transport http mcpmux http://127.0.0.1:8080/mcp
 ```
 
-**stdio transport** (`listen.transport: stdio`) — let Claude Code launch it:
+Tools appear namespaced, e.g. `github__create_issue`. Remove the individual
+servers you configured into mcpmux (`claude mcp remove <name>`) so their tools
+don't show up twice.
+
+For `listen.transport: stdio`, let Claude Code launch it instead:
 
 ```sh
 claude mcp add mcpmux -- /path/to/mcpmux serve -c /path/to/mcpmux.yaml
@@ -137,10 +142,26 @@ claude mcp add mcpmux -- /path/to/mcpmux serve -c /path/to/mcpmux.yaml
 ## Scope & limitations
 
 - **Backend auth supported:** env vars for stdio (`command` transport) backends;
-  for `http` backends: static `bearer`/`header`, and the `command` credential
-  helper (dynamic bearer token from an external CLI, auto-refreshed).
-- **Not yet:** interactive browser OAuth *to* backends (`auth.type: oauth`,
-  planned), and authenticating the *client→mcpmux* hop (run it on localhost or
-  behind your own reverse proxy / auth gateway for now).
+  for `http` backends `none`/`bearer`/`header`, the `command` credential helper
+  (dynamic bearer token from an external CLI, auto-refreshed), and interactive
+  `oauth` (authorization-code + PKCE + dynamic client registration; tokens held
+  in memory for the daemon's lifetime).
+- **Not yet:** persisting OAuth tokens across restarts (each daemon start
+  re-authenticates `oauth` backends), and authenticating the *client→mcpmux* hop
+  (run it on localhost or behind your own reverse proxy / auth gateway).
 - Tool-name collisions are avoided by the `<backend>__` prefix. Resources and
   prompts are not yet aggregated — tools only.
+
+## Development
+
+```sh
+pre-commit install && pre-commit install --hook-type commit-msg
+```
+
+Hooks run gofmt/golangci-lint, `go vet`, `govulncheck`, `go mod tidy`, and
+Conventional Commits checks; `go test` runs on push. Commit messages must follow
+[Conventional Commits](https://www.conventionalcommits.org).
+
+## License
+
+[Apache-2.0](LICENSE) © Thomas Bechtold
