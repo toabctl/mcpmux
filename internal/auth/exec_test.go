@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Thomas Bechtold <thomasbechtold@jpberlin.de>
+// SPDX-License-Identifier: Apache-2.0
+
 package auth
 
 import (
@@ -13,7 +16,7 @@ import (
 // fakeClock is a manually-advanced clock for deterministic expiry tests.
 type fakeClock struct{ t time.Time }
 
-func (c *fakeClock) now() time.Time   { return c.t }
+func (c *fakeClock) now() time.Time      { return c.t }
 func (c *fakeClock) add(d time.Duration) { c.t = c.t.Add(d) }
 
 // newTestSource builds an ExecTokenSource whose runner and clock are injected.

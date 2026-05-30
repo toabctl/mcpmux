@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Thomas Bechtold <thomasbechtold@jpberlin.de>
+// SPDX-License-Identifier: Apache-2.0
+
 // Package cmd implements the mcpmux command-line interface.
 package cmd
 
@@ -5,7 +8,7 @@ import (
 	"log/slog"
 	"os"
 
-	"mcpmux/internal/config"
+	"github.com/toabctl/mcpmux/internal/config"
 
 	"github.com/spf13/cobra"
 )

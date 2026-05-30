@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Thomas Bechtold <thomasbechtold@jpberlin.de>
+// SPDX-License-Identifier: Apache-2.0
+
 package mux
 
 import (
@@ -8,8 +11,8 @@ import (
 	"os/exec"
 	"time"
 
-	"mcpmux/internal/auth"
-	"mcpmux/internal/config"
+	"github.com/toabctl/mcpmux/internal/auth"
+	"github.com/toabctl/mcpmux/internal/config"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Thomas Bechtold <thomasbechtold@jpberlin.de>
+// SPDX-License-Identifier: Apache-2.0
+
 // Package auth provides credential mechanisms for mcpmux's backend
 // connections. The exec credential helper obtains a bearer token by running an
 // external command (e.g. "chainctl auth token --audience <resource>"),

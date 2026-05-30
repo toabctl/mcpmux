@@ -1,4 +1,4 @@
-module mcpmux
+module github.com/toabctl/mcpmux
 
 go 1.26.3
 

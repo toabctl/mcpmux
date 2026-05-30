@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Thomas Bechtold <thomasbechtold@jpberlin.de>
+// SPDX-License-Identifier: Apache-2.0
+
 // Package mux is the core of mcpmux: it connects to a set of backend MCP
 // servers, aggregates their tools under namespaced names, and exposes them
 // through a single proxy MCP server (over stdio or streamable HTTP).
@@ -11,7 +14,7 @@ import (
 	"net"
 	"net/http"
 
-	"mcpmux/internal/config"
+	"github.com/toabctl/mcpmux/internal/config"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )

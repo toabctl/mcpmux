@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Thomas Bechtold <thomasbechtold@jpberlin.de>
+// SPDX-License-Identifier: Apache-2.0
+
 package cmd
 
 import (
@@ -7,8 +10,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"mcpmux/internal/config"
-	"mcpmux/internal/mux"
+	"github.com/toabctl/mcpmux/internal/config"
+	"github.com/toabctl/mcpmux/internal/mux"
 
 	"github.com/coreos/go-systemd/v22/activation"
 	"github.com/coreos/go-systemd/v22/daemon"

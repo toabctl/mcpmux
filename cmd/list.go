@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Thomas Bechtold <thomasbechtold@jpberlin.de>
+// SPDX-License-Identifier: Apache-2.0
+
 package cmd
 
 import (
@@ -5,7 +8,7 @@ import (
 	"fmt"
 	"strings"
 
-	"mcpmux/internal/mux"
+	"github.com/toabctl/mcpmux/internal/mux"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
@@ -67,7 +70,7 @@ func listEndpoint(endpoint string, descriptions bool) error {
 	if err != nil {
 		return fmt.Errorf("connect to %s: %w", endpoint, err)
 	}
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 
 	res, err := session.ListTools(ctx, nil)
 	if err != nil {

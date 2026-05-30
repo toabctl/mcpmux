@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Thomas Bechtold <thomasbechtold@jpberlin.de>
+// SPDX-License-Identifier: Apache-2.0
+
 // Package config defines and loads the mcpmux configuration: the endpoint the
 // proxy exposes to its client, and the set of upstream MCP servers (backends)
 // it multiplexes.
