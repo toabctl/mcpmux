@@ -1,4 +1,4 @@
-# mcpmux configuration.
+# mcpmux configuration — one example per auth type.
 #
 # ${ENV_VAR} references are expanded from the process environment at load time,
 # so secrets stay out of this file. Keep real secrets in your shell/keychain.
@@ -13,48 +13,55 @@ listen:
   path: /mcp
 
 backends:
-  # A backend launched as a local subprocess (stdio). Secrets are passed via env.
-  - name: linear
+  # 1. Local subprocess (stdio). Secrets are passed via env.
+  - name: files
     transport: command
-    command: ["npx", "-y", "mcp-remote", "https://mcp.linear.app/sse"]
+    command: ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/data"]
     env:
-      LINEAR_API_KEY: ${LINEAR_API_KEY}
+      SOME_TOKEN: ${SOME_TOKEN}
 
-  # A remote streamable-HTTP backend authenticated with a bearer token.
-  - name: github
+  # 2. Remote HTTP backend, no authentication.
+  - name: public
     transport: http
-    endpoint: https://api.example.com/mcp
+    endpoint: https://public.example.com/mcp
+    auth:
+      type: none
+
+  # 3. Remote HTTP backend with a static bearer token.
+  - name: service-a
+    transport: http
+    endpoint: https://service-a.example.com/mcp
     auth:
       type: bearer
-      token: ${GITHUB_TOKEN}
+      token: ${SERVICE_A_TOKEN}
 
-  # A remote backend authenticated with a custom header.
-  - name: internal
+  # 4. Remote HTTP backend with a custom header.
+  - name: service-b
     transport: http
-    endpoint: https://internal.example.com/mcp
+    endpoint: https://service-b.example.com/mcp
     auth:
       type: header
       header: X-Api-Key
-      value: ${INTERNAL_API_KEY}
+      value: ${SERVICE_B_API_KEY}
 
-  # A remote backend whose bearer token is minted by a credential helper. The
-  # command's stdout is used as the token and re-run when it nears expiry (its
-  # JWT "exp" claim is honored; "ttl" caps caching for opaque tokens). This is
-  # the non-interactive path for CLIs that already hold a login.
-  - name: chainguard-apk
+  # 5. Remote HTTP backend whose bearer token is minted by a credential helper.
+  #    The command's stdout is used as the token and re-run when it nears expiry
+  #    (a JWT "exp" claim is honored; "ttl" caps caching for opaque tokens).
+  #    Ideal for CLIs that already hold a login — no browser, ever.
+  - name: service-c
     transport: http
-    endpoint: https://apk.cgr.dev/mcp
+    endpoint: https://service-c.example.com/mcp
     auth:
       type: command
-      command: ["chainctl", "auth", "token", "--audience", "https://apk.cgr.dev/mcp"]
+      command: ["my-cli", "auth", "token", "--audience", "https://service-c.example.com/mcp"]
       # ttl: 5m   # optional; only used for non-JWT tokens
 
-  # A backend using interactive OAuth (authorization-code + PKCE, dynamic client
-  # registration). A browser opens once when the daemon starts; tokens (and
-  # refresh, if issued) are held in memory for the daemon's lifetime.
-  - name: linear
+  # 6. Remote HTTP backend using interactive OAuth (authorization-code + PKCE,
+  #    dynamic client registration). A browser opens once when the daemon starts;
+  #    tokens (and refresh, if issued) are held in memory for the daemon's life.
+  - name: service-d
     transport: http
-    endpoint: https://mcp.linear.app/mcp
+    endpoint: https://service-d.example.com/mcp
     auth:
       type: oauth
       # scopes: []           # optional requested scopes
