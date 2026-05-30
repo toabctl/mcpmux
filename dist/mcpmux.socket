@@ -1,0 +1,25 @@
+# systemd --user socket for mcpmux. Install to ~/.config/systemd/user/.
+#
+# Socket activation means systemd owns the listening socket. Benefits:
+#   - the socket stays up across service restarts, so clients (Claude Code)
+#     never get "connection refused" while mcpmux restarts/re-authenticates;
+#   - optionally, the service can start on first connection (on-demand).
+#
+# Enable the socket (this is what you `enable`, not the service):
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now mcpmux.socket
+#
+# NOTE: the address here is the source of truth when socket-activated; the
+# `listen.address` in config.yaml is ignored (the passed socket is used). The
+# `listen.path` from config still applies.
+
+[Unit]
+Description=mcpmux MCP endpoint socket
+
+[Socket]
+ListenStream=127.0.0.1:8080
+FileDescriptorName=mcpmux
+# Keep the socket listening even while the service is stopped/restarting.
+
+[Install]
+WantedBy=sockets.target

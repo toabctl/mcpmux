@@ -1,0 +1,51 @@
+# systemd --user unit for mcpmux. Install to ~/.config/systemd/user/mcpmux.service
+# (the `make install` target does this).
+#
+# Two ways to run it (both use the socket so restarts never drop connections):
+#
+#   A) Always-on (recommended when you have interactive OAuth backends like
+#      Linear): the service authenticates once at startup and stays running.
+#        systemctl --user daemon-reload
+#        systemctl --user enable --now mcpmux.socket mcpmux.service
+#
+#   B) On-demand (only if ALL backends are non-interactive): enable just the
+#      socket; the service starts on the first connection.
+#        systemctl --user enable --now mcpmux.socket
+#
+#   journalctl --user -u mcpmux -f       # watch logs / OAuth URLs
+#
+# Running mcpmux as a long-lived user service is the point: you authenticate
+# backends once, and every Claude Code session reuses the daemon's live tokens
+# instead of re-authenticating per session.
+
+[Unit]
+Description=mcpmux - MCP multiplexer (one endpoint proxying multiple MCP servers)
+Requires=mcpmux.socket
+After=mcpmux.socket network-online.target
+Wants=network-online.target
+
+[Service]
+# Type=notify: mcpmux signals readiness (sd_notify READY=1) once all backends
+# are connected, so systemd knows when the proxy is actually serving.
+Type=notify
+NotifyAccess=main
+# Reads ~/.config/mcpmux/config.yaml by default; uses the socket from mcpmux.socket.
+# --log-level debug logs the full per-tool catalog at startup and every client
+# request. Drop it (back to the default info level) if the journal gets noisy.
+ExecStart=%h/.local/bin/mcpmux serve --log-level debug
+Restart=on-failure
+RestartSec=5
+# Allow time for an interactive browser authorization (e.g. Linear) at startup.
+# Slightly longer than mcpmux's own oauthConnectTimeout (10m) so that an
+# unapproved backend is skipped gracefully rather than the service being killed.
+TimeoutStartSec=660
+
+# Interactive OAuth backends (auth.type: oauth) open a browser at startup.
+# For auto-open to work from a user service, the graphical session environment
+# must be visible to systemd. Run once after login:
+#   systemctl --user import-environment DISPLAY WAYLAND_DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS
+# Otherwise set `open_browser: false` on those backends and click the URL shown
+# in `journalctl --user -u mcpmux`.
+
+[Install]
+WantedBy=default.target

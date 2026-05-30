@@ -1,0 +1,102 @@
+package mux
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
+	"os/exec"
+	"time"
+
+	"mcpmux/internal/auth"
+	"mcpmux/internal/config"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+// oauthConnectTimeout bounds how long startup waits for an interactive browser
+// authorization before giving up on that backend (which is then skipped, so the
+// proxy still comes up with the others). Keep below the service's
+// TimeoutStartSec so mcpmux degrades gracefully rather than being killed.
+const oauthConnectTimeout = 10 * time.Minute
+
+// backend is a live client session to one upstream MCP server.
+type backend struct {
+	name    string
+	session *mcp.ClientSession
+}
+
+// connectBackend dials a single upstream server and returns an open session.
+func connectBackend(ctx context.Context, b config.Backend, log *slog.Logger) (*backend, error) {
+	client := mcp.NewClient(&mcp.Implementation{Name: clientName, Version: clientVersion}, nil)
+
+	transport, err := transportFor(ctx, b, log)
+	if err != nil {
+		return nil, err
+	}
+
+	// Interactive OAuth blocks on the user; bound it so a walked-away browser
+	// prompt doesn't hang startup forever (the backend is then skipped).
+	connectCtx := ctx
+	if b.Transport == config.TransportHTTP && b.Auth.Type == config.AuthOAuth {
+		var cancel context.CancelFunc
+		connectCtx, cancel = context.WithTimeout(ctx, oauthConnectTimeout)
+		defer cancel()
+	}
+
+	session, err := client.Connect(connectCtx, transport, nil)
+	if err != nil {
+		return nil, fmt.Errorf("connect backend %q: %w", b.Name, err)
+	}
+	return &backend{name: b.Name, session: session}, nil
+}
+
+// transportFor builds the client transport for a backend from its config. ctx
+// bounds the lifetime of any credential-helper invocations or OAuth callback
+// servers the transport owns.
+func transportFor(ctx context.Context, b config.Backend, log *slog.Logger) (mcp.Transport, error) {
+	switch b.Transport {
+	case config.TransportCommand:
+		cmd := exec.Command(b.Command[0], b.Command[1:]...)
+		// Inherit the parent environment, then layer the backend's secrets on top.
+		cmd.Env = os.Environ()
+		for k, v := range b.Env {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
+		}
+		// Surface the subprocess's diagnostics on our stderr.
+		cmd.Stderr = os.Stderr
+		return &mcp.CommandTransport{Command: cmd}, nil
+
+	case config.TransportHTTP:
+		t := &mcp.StreamableClientTransport{Endpoint: b.Endpoint}
+		switch b.Auth.Type {
+		case config.AuthCommand:
+			// Dynamic bearer token from a credential helper; the transport
+			// sets the header from this source and refreshes via Authorize.
+			ts := auth.NewExecTokenSource(ctx, b.Auth.Command, b.Auth.TokenTTL())
+			t.OAuthHandler = auth.NewExecHandler(ts)
+		case config.AuthOAuth:
+			// Interactive authorization-code + PKCE flow with dynamic client
+			// registration; tokens held in memory for the daemon's lifetime.
+			h, err := auth.NewOAuthHandler(ctx, log, auth.OAuthOptions{
+				Label:        b.Name,
+				Scopes:       b.Auth.Scopes,
+				ClientName:   b.Auth.ClientName,
+				OpenBrowser:  b.Auth.OpenBrowserEnabled(),
+				CallbackPort: b.Auth.CallbackPort,
+			})
+			if err != nil {
+				return nil, err
+			}
+			t.OAuthHandler = h
+		default:
+			// Static credentials (bearer/header) or none.
+			key, value := b.Auth.HTTPHeader()
+			t.HTTPClient = httpClientFor(key, value)
+		}
+		return t, nil
+
+	default:
+		return nil, fmt.Errorf("backend %q: unsupported transport %q", b.Name, b.Transport)
+	}
+}
