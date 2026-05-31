@@ -2,6 +2,8 @@
 #
 # ${ENV_VAR} references are expanded from the process environment at load time,
 # so secrets stay out of this file. Keep real secrets in your shell/keychain.
+# Note: a literal "$" in a value is interpreted as an environment reference, so
+# put any secret containing "$" in an env var and reference it as ${VAR}.
 
 listen:
   # How the single proxy endpoint is exposed: "stdio" or "http".

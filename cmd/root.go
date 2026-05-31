@@ -43,7 +43,7 @@ func newRootCmd() *cobra.Command {
 func Execute(v string) {
 	version = v
 	if err := newRootCmd().Execute(); err != nil {
-		slog.Error("mcpmux failed", "err", err)
+		newLogger().Error("mcpmux failed", "err", err)
 		os.Exit(1)
 	}
 }
