@@ -152,7 +152,8 @@ func (m *Mux) ServeStdio(ctx context.Context) error {
 // ServeHTTP binds addr and serves the proxy over streamable HTTP. It returns
 // when ctx is cancelled or on a fatal error.
 func (m *Mux) ServeHTTP(ctx context.Context, addr, path string) error {
-	ln, err := net.Listen("tcp", addr)
+	var lc net.ListenConfig
+	ln, err := lc.Listen(ctx, "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", addr, err)
 	}
@@ -184,7 +185,9 @@ func (m *Mux) ServeHTTPListener(ctx context.Context, ln net.Listener, path strin
 		// responses that a write deadline would sever.
 	}
 
-	go func() {
+	// On shutdown, drain in-flight requests with a bounded grace period. ctx is
+	// already cancelled here, so a fresh background context is required.
+	go func() { //nolint:gosec // G118: the request context is intentionally not reused (it is done).
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

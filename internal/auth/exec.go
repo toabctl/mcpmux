@@ -38,6 +38,8 @@ type runnerFunc func(ctx context.Context, argv []string) ([]byte, error)
 // mint a bearer token, caching it until shortly before it expires. It is safe
 // for concurrent use.
 type ExecTokenSource struct {
+	//nolint:containedctx // oauth2.TokenSource.Token() takes no context; the
+	// daemon context stored here bounds the credential-helper invocations.
 	ctx    context.Context
 	argv   []string
 	ttl    time.Duration // fallback validity for non-JWT tokens
@@ -138,6 +140,7 @@ func (h *ExecHandler) Authorize(_ context.Context, _ *http.Request, resp *http.R
 
 // defaultRunner executes argv with the process environment, returning stdout.
 func defaultRunner(ctx context.Context, argv []string) ([]byte, error) {
+	//nolint:gosec // G204: argv is operator-supplied config (a credential helper), not external input.
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Env = os.Environ()
 	var stdout, stderr bytes.Buffer

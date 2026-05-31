@@ -96,7 +96,8 @@ type browserAuthorizer struct {
 }
 
 func newBrowserAuthorizer(ctx context.Context, label string, port int, open bool, log *slog.Logger) (*browserAuthorizer, error) {
-	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	var lc net.ListenConfig
+	ln, err := lc.Listen(ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
 		return nil, fmt.Errorf("reserve oauth callback port for %q: %w", label, err)
 	}
@@ -200,6 +201,9 @@ func openBrowser(url string) error {
 		}
 		args = []string{url}
 	}
+	// G204: opens a fixed browser launcher (or $BROWSER) with a URL we built.
+	// noctx: fire-and-forget; the browser must outlive the request context.
+	//nolint:gosec,noctx
 	return exec.Command(name, args...).Start()
 }
 

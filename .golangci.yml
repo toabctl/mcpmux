@@ -8,6 +8,18 @@ linters:
     - unconvert
     - bodyclose
     - revive
+    - gosec # security checks
+    - errorlint # correct error wrapping/comparison
+    - containedctx # context.Context stored in a struct
+    - noctx # HTTP requests without a context
+  exclusions:
+    rules:
+      # Tests legitimately use http.Get and may ignore some return values.
+      - path: _test\.go
+        linters:
+          - gosec
+          - noctx
+          - errcheck
 
 formatters:
   enable:

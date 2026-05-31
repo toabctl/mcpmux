@@ -61,7 +61,8 @@ func connectBackend(ctx context.Context, b config.Backend, log *slog.Logger) (*b
 func transportFor(ctx context.Context, b config.Backend, log *slog.Logger) (mcp.Transport, error) {
 	switch b.Transport {
 	case config.TransportCommand:
-		cmd := exec.Command(b.Command[0], b.Command[1:]...)
+		//nolint:gosec // G204: the backend command is operator-supplied config, not external input.
+		cmd := exec.CommandContext(ctx, b.Command[0], b.Command[1:]...)
 		// Inherit the parent environment, then layer the backend's secrets on top.
 		cmd.Env = os.Environ()
 		for k, v := range b.Env {

@@ -201,7 +201,7 @@ func Resolve(explicit string) (string, error) {
 // Load reads the file at path, expands ${ENV} references against the process
 // environment, parses the YAML, applies defaults and validates the result.
 func Load(path string) (*Config, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) //nolint:gosec // G304: path is the operator-provided config file location.
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
