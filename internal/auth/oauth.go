@@ -46,21 +46,8 @@ func NewOAuthHandler(ctx context.Context, log *slog.Logger, o OAuthOptions) (sdk
 		return nil, err
 	}
 
-	clientName := o.ClientName
-	if clientName == "" {
-		clientName = "mcpmux"
-	}
-	meta := &oauthex.ClientRegistrationMetadata{
-		RedirectURIs:            []string{ba.redirect},
-		ClientName:              clientName,
-		GrantTypes:              []string{"authorization_code", "refresh_token"},
-		ResponseTypes:           []string{"code"},
-		TokenEndpointAuthMethod: "none", // public client; the AS may override at registration
-		Scope:                   strings.Join(o.Scopes, " "),
-	}
-
 	cfg := &sdkauth.AuthorizationCodeHandlerConfig{
-		DynamicClientRegistrationConfig: &sdkauth.DynamicClientRegistrationConfig{Metadata: meta},
+		DynamicClientRegistrationConfig: &sdkauth.DynamicClientRegistrationConfig{Metadata: clientMetadata(o, ba.redirect)},
 		RedirectURL:                     ba.redirect,
 		AuthorizationCodeFetcher:        ba.fetch,
 	}
@@ -69,6 +56,24 @@ func NewOAuthHandler(ctx context.Context, log *slog.Logger, o OAuthOptions) (sdk
 		return nil, fmt.Errorf("build oauth handler for %q: %w", o.Label, err)
 	}
 	return h, nil
+}
+
+// clientMetadata builds the dynamic client registration metadata for a backend
+// from its OAuth options. ClientName defaults to "mcpmux"; Scopes are joined
+// into a space-separated scope string.
+func clientMetadata(o OAuthOptions, redirectURI string) *oauthex.ClientRegistrationMetadata {
+	clientName := o.ClientName
+	if clientName == "" {
+		clientName = "mcpmux"
+	}
+	return &oauthex.ClientRegistrationMetadata{
+		RedirectURIs:            []string{redirectURI},
+		ClientName:              clientName,
+		GrantTypes:              []string{"authorization_code", "refresh_token"},
+		ResponseTypes:           []string{"code"},
+		TokenEndpointAuthMethod: "none", // public client; the AS may override at registration
+		Scope:                   strings.Join(o.Scopes, " "),
+	}
 }
 
 // callbackResult carries the redirect parameters from the loopback handler.
