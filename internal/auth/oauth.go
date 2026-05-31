@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	sdkauth "github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
@@ -109,7 +110,7 @@ func newBrowserAuthorizer(ctx context.Context, label string, port int, open bool
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/callback", a.handleCallback)
-	srv := &http.Server{Handler: mux}
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() { _ = srv.Serve(ln) }()
 	go func() {
 		<-ctx.Done()

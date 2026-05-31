@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/exec"
 	"time"
@@ -93,9 +94,14 @@ func transportFor(ctx context.Context, b config.Backend, log *slog.Logger) (mcp.
 			}
 			t.OAuthHandler = h
 		default:
-			// Static credentials (bearer/header) or none.
+			// Static credentials (bearer/header) or none. Scope the credential
+			// to the backend host so a redirect cannot leak it elsewhere.
 			key, value := b.Auth.HTTPHeader()
-			t.HTTPClient = httpClientFor(key, value)
+			host := ""
+			if u, err := url.Parse(b.Endpoint); err == nil {
+				host = u.Host
+			}
+			t.HTTPClient = httpClientFor(host, key, value)
 		}
 		return t, nil
 

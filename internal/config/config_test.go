@@ -53,6 +53,52 @@ backends:
 	}
 }
 
+func TestListenIsLoopback(t *testing.T) {
+	cases := map[string]bool{
+		"127.0.0.1:8080":   true,
+		"localhost:8080":   true,
+		"[::1]:8080":       true,
+		":8080":            false,
+		"0.0.0.0:8080":     false,
+		"192.168.1.5:8080": false,
+	}
+	for addr, want := range cases {
+		if got := (Listen{Address: addr}).IsLoopback(); got != want {
+			t.Errorf("IsLoopback(%q) = %v, want %v", addr, got, want)
+		}
+	}
+}
+
+func TestDefaultListenAddressIsLoopback(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.yaml")
+	content := "listen:\n  transport: http\nbackends:\n  - name: a\n    transport: command\n    command: [\"x\"]\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Listen.Address != "127.0.0.1:8080" {
+		t.Errorf("default address = %q, want 127.0.0.1:8080", cfg.Listen.Address)
+	}
+	if !cfg.Listen.IsLoopback() {
+		t.Error("default address must be loopback")
+	}
+}
+
+// TestValidateEmptyPathNoPanic guards against indexing an empty Path when
+// Validate is called without setDefaults.
+func TestValidateEmptyPathNoPanic(t *testing.T) {
+	c := Config{
+		Listen:   Listen{Transport: TransportHTTP, Path: ""},
+		Backends: []Backend{{Name: "a", Transport: TransportCommand, Command: []string{"x"}}},
+	}
+	if err := c.Validate(); err == nil {
+		t.Error("expected an error for empty listen.path, got nil")
+	}
+}
+
 func TestTokenTTL(t *testing.T) {
 	if got := (Auth{}).TokenTTL(); got != defaultTokenTTL {
 		t.Errorf("empty TTL = %v, want default %v", got, defaultTokenTTL)

@@ -8,6 +8,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,6 +71,26 @@ type Listen struct {
 	// Path is the URL path the MCP endpoint is mounted at when Transport is
 	// "http" (e.g. "/mcp"). Clients connect to http://<address><path>.
 	Path string `yaml:"path"`
+}
+
+// IsLoopback reports whether the listen address binds only the loopback
+// interface. An empty host (e.g. ":8080") binds all interfaces and is not
+// loopback. mcpmux performs no client-side authentication, so binding a
+// non-loopback address exposes every backend's credentials to that network.
+func (l Listen) IsLoopback() bool {
+	host, _, err := net.SplitHostPort(l.Address)
+	if err != nil {
+		host = l.Address
+	}
+	switch host {
+	case "":
+		return false
+	case "localhost":
+		return true
+	default:
+		ip := net.ParseIP(host)
+		return ip != nil && ip.IsLoopback()
+	}
 }
 
 // Backend is a single upstream MCP server that mcpmux proxies to. Its tools are
@@ -202,7 +223,9 @@ func (c *Config) setDefaults() {
 		c.Listen.Transport = TransportStdio
 	}
 	if c.Listen.Address == "" {
-		c.Listen.Address = ":8080"
+		// Loopback by default: the client->mcpmux hop is unauthenticated, so we
+		// must not expose backend credentials beyond the local host.
+		c.Listen.Address = "127.0.0.1:8080"
 	}
 	if c.Listen.Path == "" {
 		c.Listen.Path = "/mcp"
@@ -222,7 +245,7 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("listen.transport must be %q or %q, got %q",
 			TransportStdio, TransportHTTP, c.Listen.Transport)
 	}
-	if c.Listen.Transport == TransportHTTP && c.Listen.Path[0] != '/' {
+	if c.Listen.Transport == TransportHTTP && (len(c.Listen.Path) == 0 || c.Listen.Path[0] != '/') {
 		return fmt.Errorf("listen.path must start with %q, got %q", "/", c.Listen.Path)
 	}
 	if len(c.Backends) == 0 {

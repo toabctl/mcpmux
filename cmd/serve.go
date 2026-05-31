@@ -55,6 +55,11 @@ func newServeCmd() *cobra.Command {
 				log.Info("using socket-activated listener", "address", ln.Addr().String())
 				return m.ServeHTTPListener(ctx, ln, cfg.Listen.Path)
 			}
+			if !cfg.Listen.IsLoopback() {
+				log.Warn("listening on a non-loopback address with no client authentication: "+
+					"anyone who can reach this address can use every backend with its credentials",
+					"address", cfg.Listen.Address)
+			}
 			return m.ServeHTTP(ctx, cfg.Listen.Address, cfg.Listen.Path)
 		},
 	}

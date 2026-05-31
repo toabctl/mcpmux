@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/toabctl/mcpmux/internal/config"
 
@@ -158,20 +159,38 @@ func (m *Mux) ServeHTTP(ctx context.Context, addr, path string) error {
 	return m.ServeHTTPListener(ctx, ln, path)
 }
 
+// httpHandler builds the HTTP handler for the proxy: the streamable-HTTP MCP
+// endpoint mounted at path, wrapped in cross-origin protection. The wrapper
+// rejects cross-origin browser requests (CSRF / defense-in-depth); non-browser
+// clients, which send no Origin/Sec-Fetch-Site header, are unaffected. The SDK
+// separately rejects DNS-rebinding (non-localhost Host) requests by default.
+func (m *Mux) httpHandler(path string) http.Handler {
+	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return m.server }, nil)
+	router := http.NewServeMux()
+	router.Handle(path, mcpHandler)
+	return http.NewCrossOriginProtection().Handler(router)
+}
+
 // ServeHTTPListener serves the proxy over streamable HTTP on an existing
 // listener, mounting the single MCP endpoint at path. This is the entry point
 // for systemd socket activation, where the listening socket is supplied by the
 // service manager. It returns when ctx is cancelled or on a fatal error.
 func (m *Mux) ServeHTTPListener(ctx context.Context, ln net.Listener, path string) error {
-	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return m.server }, nil)
-
-	router := http.NewServeMux()
-	router.Handle(path, handler)
-	srv := &http.Server{Handler: router}
+	srv := &http.Server{
+		Handler:           m.httpHandler(path),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		// No ReadTimeout/WriteTimeout: streamable HTTP uses long-lived SSE
+		// responses that a write deadline would sever.
+	}
 
 	go func() {
 		<-ctx.Done()
-		_ = srv.Close()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			_ = srv.Close()
+		}
 	}()
 
 	m.log.Info("serving", "transport", "http", "address", ln.Addr().String(), "path", path)

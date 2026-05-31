@@ -9,7 +9,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/toabctl/mcpmux/internal/config"
@@ -137,5 +139,66 @@ func TestTransportFor_UnsupportedTransport(t *testing.T) {
 	b := config.Backend{Name: "x", Transport: "bogus"}
 	if _, err := transportFor(testCtx(t), b, testLogger()); err == nil {
 		t.Error("expected an error for an unsupported transport")
+	}
+}
+
+// TestHeaderRoundTripper_HostScoped verifies the credential is attached only to
+// the configured host, so a cross-host redirect cannot leak it.
+func TestHeaderRoundTripper_HostScoped(t *testing.T) {
+	echo := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, r.Header.Get("Authorization"))
+	})
+	srvA := httptest.NewServer(echo)
+	defer srvA.Close()
+	srvB := httptest.NewServer(echo)
+	defer srvB.Close()
+
+	hostA, _ := url.Parse(srvA.URL)
+	client := httpClientFor(hostA.Host, "Authorization", "Bearer tok")
+
+	respA, err := client.Get(srvA.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bodyA, _ := io.ReadAll(respA.Body)
+	_ = respA.Body.Close()
+	if string(bodyA) != "Bearer tok" {
+		t.Errorf("scoped host saw %q, want %q", bodyA, "Bearer tok")
+	}
+
+	respB, err := client.Get(srvB.URL) // different host
+	if err != nil {
+		t.Fatal(err)
+	}
+	bodyB, _ := io.ReadAll(respB.Body)
+	_ = respB.Body.Close()
+	if string(bodyB) != "" {
+		t.Errorf("credential leaked to a different host: %q", bodyB)
+	}
+}
+
+// TestHTTPHandler_OriginProtection verifies cross-origin browser requests are
+// rejected while non-browser clients (no Sec-Fetch-Site) are allowed through.
+func TestHTTPHandler_OriginProtection(t *testing.T) {
+	m := &Mux{
+		log:    testLogger(),
+		server: mcp.NewServer(&mcp.Implementation{Name: "t", Version: "t"}, nil),
+	}
+	h := m.httpHandler("/mcp")
+
+	cross := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader("{}"))
+	cross.Header.Set("Sec-Fetch-Site", "cross-site")
+	cross.Header.Set("Origin", "https://evil.example")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, cross)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("cross-origin POST: status %d, want 403", rec.Code)
+	}
+
+	plain := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader("{}"))
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, plain)
+	if rec2.Code == http.StatusForbidden {
+		t.Error("non-browser POST should not be rejected by the origin check")
 	}
 }
