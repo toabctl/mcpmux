@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Thomas Bechtold <thomasbechtold@jpberlin.de>
+# SPDX-License-Identifier: Apache-2.0
+#
 # mcpmux configuration — one example per auth type.
 #
 # ${ENV_VAR} references are expanded from the process environment at load time,

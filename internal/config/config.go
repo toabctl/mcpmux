@@ -9,6 +9,7 @@ package config
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -270,6 +271,12 @@ func (c *Config) Validate() error {
 		case TransportHTTP:
 			if b.Endpoint == "" {
 				return fmt.Errorf("backend %q: endpoint is required for %q transport", b.Name, TransportHTTP)
+			}
+			// A malformed or scheme-less endpoint would otherwise surface as an
+			// opaque connect-time failure (and, since credentials are scoped to
+			// the parsed host, as a silently unauthenticated request).
+			if u, err := url.Parse(b.Endpoint); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+				return fmt.Errorf("backend %q: endpoint must be an absolute http(s) URL, got %q", b.Name, b.Endpoint)
 			}
 			if err := b.Auth.validate(b.Name); err != nil {
 				return err

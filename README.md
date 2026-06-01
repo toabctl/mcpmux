@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Thomas Bechtold <thomasbechtold@jpberlin.de>
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # mcpmux
 
 A minimal **Model Context Protocol (MCP) multiplexer**. It connects to several

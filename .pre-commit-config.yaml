@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Thomas Bechtold <thomasbechtold@jpberlin.de>
+# SPDX-License-Identifier: Apache-2.0
+
 # Pre-commit hooks. See https://pre-commit.com.
 #   pre-commit install && pre-commit install --hook-type commit-msg
 default_install_hook_types: [pre-commit, commit-msg, pre-push]

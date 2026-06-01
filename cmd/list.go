@@ -6,7 +6,9 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/toabctl/mcpmux/internal/mux"
 
@@ -29,8 +31,11 @@ func newListCmd() *cobra.Command {
 			"which already has every backend connected (no re-authentication).",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
+			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+			defer stop()
+
 			if endpoint != "" {
-				return listEndpoint(endpoint, descriptions)
+				return listEndpoint(ctx, endpoint, descriptions)
 			}
 
 			log := newLogger()
@@ -38,18 +43,13 @@ func newListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ctx := context.Background()
 			m, err := mux.New(ctx, cfg, log)
 			if err != nil {
 				return err
 			}
 			defer m.Close()
 
-			catalog, err := m.Catalog(ctx)
-			if err != nil {
-				return err
-			}
-			for _, t := range catalog {
+			for _, t := range m.Catalog() {
 				printTool(t.Name, t.Description, descriptions)
 			}
 			return nil
@@ -63,9 +63,8 @@ func newListCmd() *cobra.Command {
 
 // listEndpoint connects to a running mcpmux (or any MCP) HTTP endpoint and
 // prints its aggregated tools, optionally with descriptions.
-func listEndpoint(endpoint string, descriptions bool) error {
-	ctx := context.Background()
-	client := mcp.NewClient(&mcp.Implementation{Name: "mcpmux-list", Version: clientVersionString()}, nil)
+func listEndpoint(ctx context.Context, endpoint string, descriptions bool) error {
+	client := mcp.NewClient(&mcp.Implementation{Name: "mcpmux-list", Version: version}, nil)
 	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: endpoint}, nil)
 	if err != nil {
 		return fmt.Errorf("connect to %s: %w", endpoint, err)
@@ -90,5 +89,3 @@ func printTool(name, description string, withDesc bool) {
 		fmt.Println(name)
 	}
 }
-
-func clientVersionString() string { return version }

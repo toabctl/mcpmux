@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Thomas Bechtold <thomasbechtold@jpberlin.de>
+# SPDX-License-Identifier: Apache-2.0
+#
 # systemd --user unit for mcpmux. Install to ~/.config/systemd/user/mcpmux.service
 # (the `make install` target does this).
 #

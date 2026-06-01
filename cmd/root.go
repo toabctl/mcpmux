@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/toabctl/mcpmux/internal/config"
+	"github.com/toabctl/mcpmux/internal/mux"
 
 	"github.com/spf13/cobra"
 )
@@ -39,9 +40,12 @@ func newRootCmd() *cobra.Command {
 	return root
 }
 
-// Execute runs the mcpmux CLI, reporting the given build version.
+// Execute runs the mcpmux CLI, reporting the given build version. The version
+// is recorded for both the CLI's --version output and the implementation name
+// mcpmux reports to peers (backends and, for `list`, a queried endpoint).
 func Execute(v string) {
 	version = v
+	mux.SetVersion(v)
 	if err := newRootCmd().Execute(); err != nil {
 		newLogger().Error("mcpmux failed", "err", err)
 		os.Exit(1)
