@@ -97,13 +97,14 @@ func transportFor(ctx context.Context, b config.Backend, log *slog.Logger) (mcp.
 				return nil, fmt.Errorf("backend %q: auth.client_secret: %w", b.Name, err)
 			}
 			h, err := auth.NewOAuthHandler(ctx, log, auth.OAuthOptions{
-				Label:        b.Name,
-				Scopes:       b.Auth.Scopes,
-				ClientName:   b.Auth.ClientName,
-				OpenBrowser:  b.Auth.OpenBrowserEnabled(),
-				CallbackPort: b.Auth.CallbackPort,
-				ClientID:     clientID,
-				ClientSecret: clientSecret,
+				Label:               b.Name,
+				Scopes:              b.Auth.Scopes,
+				ClientName:          b.Auth.ClientName,
+				OpenBrowser:         b.Auth.OpenBrowserEnabled(),
+				CallbackPort:        b.Auth.CallbackPort,
+				ClientID:            clientID,
+				ClientSecret:        clientSecret,
+				AllowIssuerMismatch: b.Auth.AllowIssuerMismatch,
 			})
 			if err != nil {
 				return nil, err

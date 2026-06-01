@@ -151,6 +151,11 @@ type Auth struct {
 	// for each value.
 	ClientIDCommand     []string `yaml:"client_id_command"`
 	ClientSecretCommand []string `yaml:"client_secret_command"`
+	// AllowIssuerMismatch tolerates an authorization server whose metadata
+	// declares a different issuer than the URL it is served from (an RFC 8414
+	// violation the SDK rejects by default). Required for Slack, whose metadata
+	// at mcp.slack.com declares issuer "https://slack.com".
+	AllowIssuerMismatch bool `yaml:"allow_issuer_mismatch"`
 	// OpenBrowser controls auto-launching the auth URL (default true). The URL
 	// is always logged, so headless use works with this set to false.
 	OpenBrowser *bool `yaml:"open_browser"`
