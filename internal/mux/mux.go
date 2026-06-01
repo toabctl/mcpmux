@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/toabctl/mcpmux/internal/config"
@@ -42,7 +43,7 @@ type Mux struct {
 func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Mux, error) {
 	m := &Mux{
 		log:    log,
-		server: mcp.NewServer(&mcp.Implementation{Name: clientName, Version: clientVersion}, nil),
+		server: mcp.NewServer(&mcp.Implementation{Name: clientName, Version: clientVersion}, serverOptions(cfg)),
 	}
 	// Debug-log every inbound request from the client (no-op unless --log-level debug).
 	m.server.AddReceivingMiddleware(requestLogger(log))
@@ -55,6 +56,7 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Mux, error
 			log.Warn("skipping backend: connect failed", "backend", bc.Name, "err", err)
 			continue
 		}
+		b.desc = bc.Description
 
 		n, err := m.register(ctx, b)
 		if err != nil {
@@ -87,6 +89,12 @@ func (m *Mux) register(ctx context.Context, b *backend) (int, error) {
 		// schema, description, etc. are forwarded to the client unchanged.
 		proxied := *tool
 		proxied.Name = toolName(b.name, tool.Name)
+		// Front-load the backend's description onto the tool so the client's
+		// model can tell which backend a tool belongs to (e.g. two AWS profiles
+		// exposing identically-named tools).
+		if b.desc != "" {
+			proxied.Description = withBackendContext(b.desc, tool.Description)
+		}
 		// AddTool requires a non-nil object input schema; supply a permissive
 		// default for backends that advertise none.
 		if proxied.InputSchema == nil {
@@ -122,6 +130,36 @@ func (m *Mux) register(ctx context.Context, b *backend) (int, error) {
 // toolName builds the namespaced tool name exposed to the client.
 func toolName(backend, tool string) string {
 	return backend + "__" + tool
+}
+
+// withBackendContext front-loads a backend's description onto a tool's own
+// description (kept first so it survives client-side truncation), so the
+// client's model sees which backend a tool belongs to.
+func withBackendContext(backendDesc, toolDesc string) string {
+	if toolDesc == "" {
+		return backendDesc
+	}
+	return backendDesc + "\n\n" + toolDesc
+}
+
+// serverOptions builds the proxy server's options. When any backend has a
+// description, it sets server instructions listing each backend's "<name>__"
+// prefix and description, which clients with tool search use to decide when to
+// surface a backend's tools. Returns nil when no backend is described.
+func serverOptions(cfg *config.Config) *mcp.ServerOptions {
+	var lines []string
+	for _, b := range cfg.Backends {
+		if b.Description != "" {
+			lines = append(lines, fmt.Sprintf("- %s__*: %s", b.Name, b.Description))
+		}
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+	return &mcp.ServerOptions{
+		Instructions: "Tools are namespaced as <backend>__<tool>, aggregated from these backends:\n" +
+			strings.Join(lines, "\n"),
+	}
 }
 
 // ToolInfo describes one aggregated tool for diagnostics.

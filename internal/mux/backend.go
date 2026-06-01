@@ -27,6 +27,7 @@ const oauthConnectTimeout = 10 * time.Minute
 // backend is a live client session to one upstream MCP server.
 type backend struct {
 	name    string
+	desc    string // optional operator description, surfaced to the client
 	session *mcp.ClientSession
 	// tools is the backend's aggregated tool catalog, captured at registration
 	// so Catalog can report it without re-querying the backend.
