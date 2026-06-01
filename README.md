@@ -14,11 +14,13 @@ backend.
 
 ## Architecture
 
-```
-                       ┌──────────────── mcpmux ────────────────┐
-   MCP client  ──────► │  MCP server  ─►  router  ─►  client(s)  │ ─► backend A (command, env secrets)
-   (one endpoint)      │                                         │ ─► backend B (http, bearer token)
-                       └─────────────────────────────────────────┘ ─► backend C (http, custom header)
+```mermaid
+flowchart LR
+    client["MCP client<br/>(Claude Code)"] -->|"one endpoint · stdio/http"| mcpmux
+    mcpmux["<b>mcpmux</b><br/>route + namespace as &lt;backend&gt;__&lt;tool&gt;<br/>hold each backend's credentials"]
+    mcpmux --> b1["files · command · env secrets"]
+    mcpmux --> b2["github · http · bearer token"]
+    mcpmux --> b3["linear · http · OAuth"]
 ```
 
 One inbound MCP server fans out to one client session per backend. Tool names get
