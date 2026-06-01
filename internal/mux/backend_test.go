@@ -170,6 +170,18 @@ func TestServerOptions(t *testing.T) {
 	}
 }
 
+func TestResolveValue(t *testing.T) {
+	if v, err := resolveValue(testCtx(t), "literal", nil); err != nil || v != "literal" {
+		t.Errorf("literal: got (%q, %v)", v, err)
+	}
+	if v, err := resolveValue(testCtx(t), "", []string{"echo", "fromcmd"}); err != nil || v != "fromcmd" {
+		t.Errorf("command: got (%q, %v)", v, err)
+	}
+	if v, err := resolveValue(testCtx(t), "", nil); err != nil || v != "" {
+		t.Errorf("absent: got (%q, %v)", v, err)
+	}
+}
+
 func TestTransportFor_UnsupportedTransport(t *testing.T) {
 	b := config.Backend{Name: "x", Transport: "bogus"}
 	if _, err := transportFor(testCtx(t), b, testLogger()); err == nil {

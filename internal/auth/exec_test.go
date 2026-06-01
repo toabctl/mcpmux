@@ -138,6 +138,19 @@ func TestExecHandler_AuthorizeRefreshes(t *testing.T) {
 	}
 }
 
+func TestRunString(t *testing.T) {
+	out, err := RunString(context.Background(), []string{"echo", "hi"})
+	if err != nil {
+		t.Fatalf("RunString: %v", err)
+	}
+	if out != "hi" { // trailing newline trimmed
+		t.Errorf("RunString = %q, want %q", out, "hi")
+	}
+	if _, err := RunString(context.Background(), []string{"false"}); err == nil {
+		t.Error("expected error when the command fails")
+	}
+}
+
 // makeJWT builds an unsigned JWT-shaped string with the given exp claim.
 func makeJWT(exp int64) string {
 	hdr := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
