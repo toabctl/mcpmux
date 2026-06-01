@@ -16,26 +16,30 @@ import (
 	sdkauth "github.com/modelcontextprotocol/go-sdk/auth"
 )
 
-// drives fetch and the loopback callback, returning fetch's result. It retries
-// the callback GET until fetch has registered its waiter (avoiding a race on
-// startup), or fails the test on timeout.
-func driveCallback(t *testing.T, query string) (*sdkauth.AuthorizationResult, error) {
+// freePort returns a currently-free loopback TCP port.
+func freePort(t *testing.T) int {
 	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	a, err := newBrowserAuthorizer(ctx, "test", 0, false, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("newBrowserAuthorizer: %v", err)
+		t.Fatal(err)
 	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+	return port
+}
 
+// driveFetch runs a.fetch and the loopback callback concurrently, returning
+// fetch's result. It retries the callback GET until fetch has registered its
+// waiter (avoiding a race on startup), or fails the test on timeout.
+func driveFetch(t *testing.T, a *browserAuthorizer, query string) (*sdkauth.AuthorizationResult, error) {
+	t.Helper()
 	type result struct {
 		r *sdkauth.AuthorizationResult
 		e error
 	}
 	done := make(chan result, 1)
 	go func() {
-		r, e := a.fetch(ctx, &sdkauth.AuthorizationArgs{URL: "http://example.test/authorize"})
+		r, e := a.fetch(context.Background(), &sdkauth.AuthorizationArgs{URL: "http://example.test/authorize"})
 		done <- result{r, e}
 	}()
 
@@ -51,6 +55,19 @@ func driveCallback(t *testing.T, query string) (*sdkauth.AuthorizationResult, er
 	}
 	t.Fatal("fetch did not complete")
 	return nil, nil
+}
+
+// drives fetch and the loopback callback for an ephemeral-port authorizer.
+func driveCallback(t *testing.T, query string) (*sdkauth.AuthorizationResult, error) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	a, err := newBrowserAuthorizer(ctx, "test", 0, false, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("newBrowserAuthorizer: %v", err)
+	}
+	return driveFetch(t, a, query)
 }
 
 func TestBrowserAuthorizer_Success(t *testing.T) {
@@ -73,14 +90,7 @@ func TestBrowserAuthorizer_ErrorParam(t *testing.T) {
 // TestBrowserAuthorizer_FixedPort checks that a configured callback_port is
 // honored in the redirect URI (0 would pick an ephemeral port instead).
 func TestBrowserAuthorizer_FixedPort(t *testing.T) {
-	// Grab a free port, then ask the authorizer to bind it explicitly.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-
+	port := freePort(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	a, err := newBrowserAuthorizer(ctx, "x", port, false, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -90,6 +100,46 @@ func TestBrowserAuthorizer_FixedPort(t *testing.T) {
 	want := fmt.Sprintf("http://127.0.0.1:%d/callback", port)
 	if a.redirect != want {
 		t.Errorf("redirect = %q, want %q", a.redirect, want)
+	}
+}
+
+// TestBrowserAuthorizer_FixedPortLazy verifies a fixed callback port is bound
+// only while a flow runs: it is free at construction, free again after fetch,
+// and can therefore be reused by another authorizer (the basis for sharing one
+// callback_port across backends).
+func TestBrowserAuthorizer_FixedPortLazy(t *testing.T) {
+	port := freePort(t)
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	a, err := newBrowserAuthorizer(ctx, "x", port, false, log)
+	if err != nil {
+		t.Fatalf("newBrowserAuthorizer: %v", err)
+	}
+	// Construction must not hold the port.
+	if ln, err := net.Listen("tcp", addr); err != nil {
+		t.Fatalf("port held at construction, want lazy binding: %v", err)
+	} else {
+		_ = ln.Close()
+	}
+
+	if r, err := driveFetch(t, a, "code=c&state=s"); err != nil || r == nil || r.Code != "c" {
+		t.Fatalf("first fetch: r=%+v err=%v", r, err)
+	}
+	// Port must be released after the flow, so a second authorizer can reuse it.
+	b, err := newBrowserAuthorizer(ctx, "y", port, false, log)
+	if err != nil {
+		t.Fatalf("newBrowserAuthorizer (reuse): %v", err)
+	}
+	if r, err := driveFetch(t, b, "code=c2&state=s2"); err != nil || r == nil || r.Code != "c2" {
+		t.Fatalf("second fetch on shared port: r=%+v err=%v", r, err)
+	}
+	if ln, err := net.Listen("tcp", addr); err != nil {
+		t.Fatalf("port not released after fetch: %v", err)
+	} else {
+		_ = ln.Close()
 	}
 }
 
