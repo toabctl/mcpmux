@@ -78,3 +78,14 @@ backends:
       # client_name: mcpmux  # shown on the consent screen
       # open_browser: true   # false = just log the URL (headless/SSH)
       # callback_port: 0     # 0 = ephemeral loopback port
+      #
+      # By default a client is registered dynamically (RFC 7591). For servers
+      # that don't support that (e.g. Slack), use a pre-registered client by
+      # setting client_id (+ client_secret for a confidential client). Then set
+      # a fixed callback_port and register http://127.0.0.1:<port>/callback as
+      # the app's redirect URI. Each value may be a literal, a ${ENV} reference,
+      # or sourced from a helper command:
+      # client_id: ${OAUTH_CLIENT_ID}
+      # client_secret: ${OAUTH_CLIENT_SECRET}
+      # client_secret_command: ["pass", "show", "service-d/client-secret"]
+      # client_id_command: ["secret-tool", "lookup", "service", "service-d"]

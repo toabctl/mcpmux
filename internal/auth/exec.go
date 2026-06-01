@@ -143,6 +143,17 @@ func (h *ExecHandler) Authorize(_ context.Context, _ *http.Request, resp *http.R
 	return nil
 }
 
+// RunString runs argv and returns its trimmed stdout. It is used to source a
+// config value (e.g. an OAuth client id/secret) from a helper command such as
+// "pass" or "secret-tool".
+func RunString(ctx context.Context, argv []string) (string, error) {
+	out, err := defaultRunner(ctx, argv)
+	if err != nil {
+		return "", fmt.Errorf("value command %q failed: %w", argv[0], err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // defaultRunner executes argv with the process environment, returning stdout.
 func defaultRunner(ctx context.Context, argv []string) ([]byte, error) {
 	//nolint:gosec // G204: argv is operator-supplied config (a credential helper), not external input.

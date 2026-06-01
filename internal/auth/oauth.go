@@ -35,6 +35,11 @@ type OAuthOptions struct {
 	OpenBrowser bool
 	// CallbackPort fixes the loopback callback port; 0 picks an ephemeral one.
 	CallbackPort int
+	// ClientID/ClientSecret select a pre-registered ("confidential") client
+	// instead of dynamic client registration, for servers that don't support
+	// DCR. ClientSecret may be empty for a pre-registered public client.
+	ClientID     string
+	ClientSecret string
 }
 
 // NewOAuthHandler builds an OAuthHandler that performs the authorization-code
@@ -48,9 +53,20 @@ func NewOAuthHandler(ctx context.Context, log *slog.Logger, o OAuthOptions) (sdk
 	}
 
 	cfg := &sdkauth.AuthorizationCodeHandlerConfig{
-		DynamicClientRegistrationConfig: &sdkauth.DynamicClientRegistrationConfig{Metadata: clientMetadata(o, ba.redirect)},
-		RedirectURL:                     ba.redirect,
-		AuthorizationCodeFetcher:        ba.fetch,
+		RedirectURL:              ba.redirect,
+		AuthorizationCodeFetcher: ba.fetch,
+	}
+	if o.ClientID != "" {
+		// Pre-registered client: the server doesn't support dynamic client
+		// registration (e.g. Slack). The redirect URI must be registered with
+		// the provider, hence the fixed callback port.
+		cc := &oauthex.ClientCredentials{ClientID: o.ClientID}
+		if o.ClientSecret != "" {
+			cc.ClientSecretAuth = &oauthex.ClientSecretAuth{ClientSecret: o.ClientSecret}
+		}
+		cfg.PreregisteredClient = cc
+	} else {
+		cfg.DynamicClientRegistrationConfig = &sdkauth.DynamicClientRegistrationConfig{Metadata: clientMetadata(o, ba.redirect)}
 	}
 	h, err := sdkauth.NewAuthorizationCodeHandler(cfg)
 	if err != nil {

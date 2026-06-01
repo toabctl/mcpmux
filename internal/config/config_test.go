@@ -69,6 +69,28 @@ func TestBackendDescriptionParses(t *testing.T) {
 	}
 }
 
+func TestOAuthClientCredentialsParse(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.yaml")
+	content := "listen:\n  transport: stdio\nbackends:\n" +
+		"  - name: a\n    transport: http\n    endpoint: https://x/mcp\n    auth:\n" +
+		"      type: oauth\n      client_id: cid\n" +
+		"      client_secret_command: [\"pass\", \"show\", \"x\"]\n      callback_port: 8807\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	a := cfg.Backends[0].Auth
+	if a.ClientID != "cid" {
+		t.Errorf("ClientID = %q", a.ClientID)
+	}
+	if len(a.ClientSecretCommand) != 3 || a.ClientSecretCommand[0] != "pass" {
+		t.Errorf("ClientSecretCommand = %v", a.ClientSecretCommand)
+	}
+}
+
 func TestListenIsLoopback(t *testing.T) {
 	cases := map[string]bool{
 		"127.0.0.1:8080":   true,
@@ -202,6 +224,13 @@ func TestValidateRejectsBadConfigs(t *testing.T) {
 			Backends: []Backend{{
 				Name: "a", Transport: TransportHTTP, Endpoint: "https://x",
 				Auth: Auth{Type: AuthCommand, Command: []string{"x"}, TTL: "not-a-duration"},
+			}},
+		},
+		"oauth client_id literal and command": {
+			Listen: Listen{Transport: TransportStdio},
+			Backends: []Backend{{
+				Name: "a", Transport: TransportHTTP, Endpoint: "https://x",
+				Auth: Auth{Type: AuthOAuth, ClientID: "cid", ClientIDCommand: []string{"pass", "show", "x"}},
 			}},
 		},
 		"unknown auth type": {

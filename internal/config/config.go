@@ -137,6 +137,20 @@ type Auth struct {
 	Scopes       []string `yaml:"scopes"`        // optional requested scopes
 	ClientName   string   `yaml:"client_name"`   // DCR client_name (default "mcpmux")
 	CallbackPort int      `yaml:"callback_port"` // fixed loopback port; 0 = ephemeral
+	// ClientID and ClientSecret use a pre-registered ("confidential") OAuth
+	// client instead of dynamic client registration, for servers that don't
+	// support DCR (e.g. Slack). When ClientID is set, the redirect URI must be
+	// registered with the provider, so set a fixed CallbackPort to match.
+	// ClientSecret may be empty for a pre-registered public client.
+	ClientID     string `yaml:"client_id"`
+	ClientSecret string `yaml:"client_secret"`
+	// ClientIDCommand / ClientSecretCommand source the value from a helper
+	// command's stdout (e.g. ["pass","show","slack/id"] or
+	// ["secret-tool","lookup","service","slack"]), as an alternative to a
+	// literal or ${ENV}. At most one of the literal or command form may be set
+	// for each value.
+	ClientIDCommand     []string `yaml:"client_id_command"`
+	ClientSecretCommand []string `yaml:"client_secret_command"`
 	// OpenBrowser controls auto-launching the auth URL (default true). The URL
 	// is always logged, so headless use works with this set to false.
 	OpenBrowser *bool `yaml:"open_browser"`
@@ -318,6 +332,12 @@ func (a Auth) validate(backend string) error {
 	case AuthOAuth:
 		if a.CallbackPort < 0 || a.CallbackPort > 65535 {
 			return fmt.Errorf("backend %q: auth.callback_port %d out of range", backend, a.CallbackPort)
+		}
+		if a.ClientID != "" && len(a.ClientIDCommand) > 0 {
+			return fmt.Errorf("backend %q: set only one of auth.client_id or auth.client_id_command", backend)
+		}
+		if a.ClientSecret != "" && len(a.ClientSecretCommand) > 0 {
+			return fmt.Errorf("backend %q: set only one of auth.client_secret or auth.client_secret_command", backend)
 		}
 		return nil
 	default:

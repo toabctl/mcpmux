@@ -93,6 +93,32 @@ func TestBrowserAuthorizer_FixedPort(t *testing.T) {
 	}
 }
 
+func TestNewOAuthHandler_PreregisteredClient(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h, err := NewOAuthHandler(ctx, log, OAuthOptions{Label: "x", ClientID: "cid", ClientSecret: "csecret"})
+	if err != nil {
+		t.Fatalf("preregistered client: %v", err)
+	}
+	if h == nil {
+		t.Fatal("nil handler")
+	}
+}
+
+func TestNewOAuthHandler_DynamicRegistration(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h, err := NewOAuthHandler(ctx, log, OAuthOptions{Label: "x"}) // no ClientID -> DCR
+	if err != nil {
+		t.Fatalf("dynamic registration: %v", err)
+	}
+	if h == nil {
+		t.Fatal("nil handler")
+	}
+}
+
 func TestClientMetadata(t *testing.T) {
 	m := clientMetadata(OAuthOptions{Scopes: []string{"read", "write"}}, "http://127.0.0.1:1/callback")
 	if m.ClientName != "mcpmux" {

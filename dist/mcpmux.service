@@ -35,6 +35,11 @@ NotifyAccess=main
 # Reads ~/.config/mcpmux/config.yaml by default; uses the socket from mcpmux.socket.
 # --log-level debug logs the full per-tool catalog at startup and every client
 # request. Drop it (back to the default info level) if the journal gets noisy.
+# Optional file holding secrets referenced as ${VAR} in the config (e.g. an
+# OAuth client_id/client_secret for a backend whose server needs a pre-registered
+# client). The leading "-" makes it optional. Keep it out of version control and
+# chmod 600 — it is NOT part of the (symlinked) config.
+EnvironmentFile=-%h/.config/mcpmux/mcpmux.env
 ExecStart=%h/.local/bin/mcpmux serve --log-level debug
 Restart=on-failure
 RestartSec=5

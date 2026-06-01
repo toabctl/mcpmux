@@ -85,14 +85,25 @@ func transportFor(ctx context.Context, b config.Backend, log *slog.Logger) (mcp.
 			ts := auth.NewExecTokenSource(ctx, b.Auth.Command, b.Auth.TokenTTL())
 			t.OAuthHandler = auth.NewExecHandler(ts)
 		case config.AuthOAuth:
-			// Interactive authorization-code + PKCE flow with dynamic client
-			// registration; tokens held in memory for the daemon's lifetime.
+			// Interactive authorization-code + PKCE flow. Uses dynamic client
+			// registration by default, or a pre-registered client when
+			// client_id is configured (literal/${ENV} or a helper command).
+			clientID, err := resolveValue(ctx, b.Auth.ClientID, b.Auth.ClientIDCommand)
+			if err != nil {
+				return nil, fmt.Errorf("backend %q: auth.client_id: %w", b.Name, err)
+			}
+			clientSecret, err := resolveValue(ctx, b.Auth.ClientSecret, b.Auth.ClientSecretCommand)
+			if err != nil {
+				return nil, fmt.Errorf("backend %q: auth.client_secret: %w", b.Name, err)
+			}
 			h, err := auth.NewOAuthHandler(ctx, log, auth.OAuthOptions{
 				Label:        b.Name,
 				Scopes:       b.Auth.Scopes,
 				ClientName:   b.Auth.ClientName,
 				OpenBrowser:  b.Auth.OpenBrowserEnabled(),
 				CallbackPort: b.Auth.CallbackPort,
+				ClientID:     clientID,
+				ClientSecret: clientSecret,
 			})
 			if err != nil {
 				return nil, err
@@ -113,4 +124,18 @@ func transportFor(ctx context.Context, b config.Backend, log *slog.Logger) (mcp.
 	default:
 		return nil, fmt.Errorf("backend %q: unsupported transport %q", b.Name, b.Transport)
 	}
+}
+
+// resolveValue returns literal when set; otherwise, when command is non-empty,
+// runs it and returns its trimmed stdout. Both empty yields "" (a valid absent
+// optional credential). Config validation guarantees literal and command are
+// not both set.
+func resolveValue(ctx context.Context, literal string, command []string) (string, error) {
+	if literal != "" {
+		return literal, nil
+	}
+	if len(command) > 0 {
+		return auth.RunString(ctx, command)
+	}
+	return "", nil
 }
