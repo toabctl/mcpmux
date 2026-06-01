@@ -20,6 +20,11 @@ listen:
 backends:
   # 1. Local subprocess (stdio). Secrets are passed via env.
   - name: files
+    # Optional free-text context for the client's model. mcpmux front-loads it
+    # onto this backend's tool descriptions and lists it in the server
+    # instructions — handy to disambiguate multiple backends of the same kind
+    # (e.g. several AWS profiles).
+    description: "Local filesystem server rooted at /data."
     transport: command
     command: ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/data"]
     env:

@@ -53,6 +53,22 @@ backends:
 	}
 }
 
+func TestBackendDescriptionParses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.yaml")
+	content := "listen:\n  transport: stdio\nbackends:\n" +
+		"  - name: a\n    description: prod AWS account\n    transport: command\n    command: [\"x\"]\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Backends[0].Description; got != "prod AWS account" {
+		t.Errorf("Description = %q, want %q", got, "prod AWS account")
+	}
+}
+
 func TestListenIsLoopback(t *testing.T) {
 	cases := map[string]bool{
 		"127.0.0.1:8080":   true,

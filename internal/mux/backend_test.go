@@ -135,6 +135,41 @@ func TestTransportFor_HTTPSetsOAuthHandler(t *testing.T) {
 	}
 }
 
+func TestWithBackendContext(t *testing.T) {
+	if got := withBackendContext("prod AWS", "Describe an instance."); got != "prod AWS\n\nDescribe an instance." {
+		t.Errorf("got %q", got)
+	}
+	// An empty tool description yields just the backend context (no stray newlines).
+	if got := withBackendContext("prod AWS", ""); got != "prod AWS" {
+		t.Errorf("got %q, want %q", got, "prod AWS")
+	}
+}
+
+func TestServerOptions(t *testing.T) {
+	// No descriptions -> nil (no instructions).
+	none := &config.Config{Backends: []config.Backend{{Name: "a"}, {Name: "b"}}}
+	if serverOptions(none) != nil {
+		t.Error("expected nil ServerOptions when no backend is described")
+	}
+
+	// Described backends are listed by their namespaced prefix; undescribed ones
+	// are omitted.
+	cfg := &config.Config{Backends: []config.Backend{
+		{Name: "aws-prod", Description: "prod AWS (710...)"},
+		{Name: "plain"},
+	}}
+	opt := serverOptions(cfg)
+	if opt == nil {
+		t.Fatal("expected ServerOptions with instructions")
+	}
+	if !strings.Contains(opt.Instructions, "aws-prod__*: prod AWS (710...)") {
+		t.Errorf("instructions missing described backend: %q", opt.Instructions)
+	}
+	if strings.Contains(opt.Instructions, "plain__*") {
+		t.Errorf("instructions should omit undescribed backend: %q", opt.Instructions)
+	}
+}
+
 func TestTransportFor_UnsupportedTransport(t *testing.T) {
 	b := config.Backend{Name: "x", Transport: "bogus"}
 	if _, err := transportFor(testCtx(t), b, testLogger()); err == nil {

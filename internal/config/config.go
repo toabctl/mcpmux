@@ -99,6 +99,11 @@ func (l Listen) IsLoopback() bool {
 type Backend struct {
 	// Name namespaces the backend's tools and must be unique.
 	Name string `yaml:"name"`
+	// Description is optional free text about this backend (e.g. which account
+	// or environment it targets). mcpmux front-loads it onto each of the
+	// backend's tool descriptions and lists it in the server instructions, so a
+	// client's model can tell otherwise-identical backends apart.
+	Description string `yaml:"description"`
 	// Transport is "command" or "http".
 	Transport Transport `yaml:"transport"`
 
