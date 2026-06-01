@@ -89,3 +89,9 @@ backends:
       # client_secret: ${OAUTH_CLIENT_SECRET}
       # client_secret_command: ["pass", "show", "service-d/client-secret"]
       # client_id_command: ["secret-tool", "lookup", "service", "service-d"]
+      #
+      # allow_issuer_mismatch tolerates a server whose authorization-server
+      # metadata declares a different issuer than the URL it is served from (an
+      # RFC 8414 violation). Required for Slack (mcp.slack.com declares issuer
+      # https://slack.com). Only enable it for servers you trust.
+      # allow_issuer_mismatch: true

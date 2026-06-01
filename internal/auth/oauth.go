@@ -40,6 +40,10 @@ type OAuthOptions struct {
 	// DCR. ClientSecret may be empty for a pre-registered public client.
 	ClientID     string
 	ClientSecret string
+	// AllowIssuerMismatch tolerates an authorization server whose metadata
+	// declares an issuer different from the URL it is served from (RFC 8414
+	// §3.3 violation), by normalizing the issuer client-side. Needed for Slack.
+	AllowIssuerMismatch bool
 }
 
 // NewOAuthHandler builds an OAuthHandler that performs the authorization-code
@@ -55,6 +59,11 @@ func NewOAuthHandler(ctx context.Context, log *slog.Logger, o OAuthOptions) (sdk
 	cfg := &sdkauth.AuthorizationCodeHandlerConfig{
 		RedirectURL:              ba.redirect,
 		AuthorizationCodeFetcher: ba.fetch,
+	}
+	if o.AllowIssuerMismatch {
+		// Normalize the AS-metadata issuer so the SDK's RFC 8414 check accepts a
+		// server (e.g. Slack) whose metadata declares a mismatched issuer.
+		cfg.Client = issuerNormalizingClient()
 	}
 	if o.ClientID != "" {
 		// Pre-registered client: the server doesn't support dynamic client
