@@ -107,10 +107,19 @@ type callbackResult struct {
 	code, state, errMsg string
 }
 
+// authMu serializes interactive (browser) authorizations across all backends.
+// A loopback callback port is only needed for the brief authorization-code
+// redirect, so holding this lock while one flow runs lets backends that share a
+// fixed callback_port use it one at a time instead of each reserving a distinct
+// port for the daemon's whole lifetime. A human can only complete one browser
+// consent at a time anyway, so serializing costs nothing in practice.
+var authMu sync.Mutex
+
 // browserAuthorizer runs a loopback HTTP server that captures the OAuth
 // redirect, and supplies the AuthorizationCodeFetcher used by the SDK handler.
 type browserAuthorizer struct {
 	redirect string
+	port     int // configured callback_port; 0 means an ephemeral port
 	open     bool
 	openURL  func(string) error
 	log      *slog.Logger
@@ -121,28 +130,45 @@ type browserAuthorizer struct {
 }
 
 func newBrowserAuthorizer(ctx context.Context, label string, port int, open bool, log *slog.Logger) (*browserAuthorizer, error) {
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", port))
-	if err != nil {
-		return nil, fmt.Errorf("reserve oauth callback port for %q: %w", label, err)
-	}
 	a := &browserAuthorizer{
-		redirect: fmt.Sprintf("http://%s/callback", ln.Addr().String()),
-		open:     open,
-		openURL:  openBrowser,
-		log:      log,
-		label:    label,
+		port:    port,
+		open:    open,
+		openURL: openBrowser,
+		log:     log,
+		label:   label,
 	}
+	if port == 0 {
+		// Ephemeral: the port must be discovered now so the redirect URI is stable,
+		// and is then held for the daemon's lifetime. Ephemeral ports don't collide,
+		// so there is nothing to share or serialize.
+		var lc net.ListenConfig
+		ln, err := lc.Listen(ctx, "tcp", "127.0.0.1:0")
+		if err != nil {
+			return nil, fmt.Errorf("reserve oauth callback port for %q: %w", label, err)
+		}
+		a.redirect = fmt.Sprintf("http://%s/callback", ln.Addr().String())
+		srv := a.serveCallback(ln)
+		go func() {
+			<-ctx.Done()
+			_ = srv.Close()
+		}()
+		return a, nil
+	}
+	// Fixed port: do not reserve it now. fetch() binds it only while an
+	// authorization is in flight (under authMu), so the port stays free otherwise
+	// and multiple backends can be configured to share it.
+	a.redirect = fmt.Sprintf("http://127.0.0.1:%d/callback", port)
+	return a, nil
+}
 
+// serveCallback starts an HTTP server on ln that delivers the OAuth redirect to
+// this authorizer, and returns it so the caller controls its lifetime.
+func (a *browserAuthorizer) serveCallback(ln net.Listener) *http.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/callback", a.handleCallback)
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() { _ = srv.Serve(ln) }()
-	go func() {
-		<-ctx.Done()
-		_ = srv.Close()
-	}()
-	return a, nil
+	return srv
 }
 
 func (a *browserAuthorizer) handleCallback(w http.ResponseWriter, r *http.Request) {
@@ -173,10 +199,31 @@ func (a *browserAuthorizer) handleCallback(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-// fetch implements sdkauth.AuthorizationCodeFetcher: it surfaces the auth URL
-// (and optionally opens a browser), then blocks until the loopback callback
-// fires or ctx is done.
+// fetch implements sdkauth.AuthorizationCodeFetcher. For a fixed callback_port
+// it binds the loopback listener only for the duration of this flow — serialized
+// via authMu so backends can share one port — and releases it on return. For an
+// ephemeral port the listener was already started at construction.
 func (a *browserAuthorizer) fetch(ctx context.Context, args *sdkauth.AuthorizationArgs) (*sdkauth.AuthorizationResult, error) {
+	if a.port == 0 {
+		return a.await(ctx, args)
+	}
+	authMu.Lock()
+	defer authMu.Unlock()
+
+	var lc net.ListenConfig
+	ln, err := lc.Listen(ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", a.port))
+	if err != nil {
+		return nil, fmt.Errorf("reserve oauth callback port for %q: %w", a.label, err)
+	}
+	srv := a.serveCallback(ln)
+	defer func() { _ = srv.Close() }()
+	return a.await(ctx, args)
+}
+
+// await surfaces the auth URL (optionally opening a browser), then blocks until
+// the loopback callback fires or ctx is done. The callback listener must already
+// be serving when this is called.
+func (a *browserAuthorizer) await(ctx context.Context, args *sdkauth.AuthorizationArgs) (*sdkauth.AuthorizationResult, error) {
 	ch := make(chan callbackResult, 1)
 	a.mu.Lock()
 	a.waiting = ch
