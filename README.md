@@ -85,15 +85,6 @@ systemctl --user enable --now mcpmux.socket mcpmux.service
 See the comments in `dist/mcpmux.service` and `dist/mcpmux.socket` for the
 always-on vs on-demand modes and the OAuth-at-startup setup.
 
-## Development
-
-```sh
-pre-commit install && pre-commit install --hook-type commit-msg
-```
-
-Hooks run golangci-lint, `go vet`, `govulncheck`, and `go mod tidy`; `go test`
-runs on push. Commit messages follow [Conventional Commits](https://www.conventionalcommits.org).
-
 ## License
 
 [Apache-2.0](LICENSE) © Thomas Bechtold
