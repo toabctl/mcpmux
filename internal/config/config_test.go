@@ -159,6 +159,14 @@ func TestValidateRejectsBadConfigs(t *testing.T) {
 			Listen:   Listen{Transport: TransportStdio},
 			Backends: []Backend{{Name: "a", Transport: TransportHTTP}},
 		},
+		"http with scheme-less endpoint": {
+			Listen:   Listen{Transport: TransportStdio},
+			Backends: []Backend{{Name: "a", Transport: TransportHTTP, Endpoint: "example.com/mcp"}},
+		},
+		"http with non-http scheme": {
+			Listen:   Listen{Transport: TransportStdio},
+			Backends: []Backend{{Name: "a", Transport: TransportHTTP, Endpoint: "ftp://example.com/mcp"}},
+		},
 		"header auth without header name": {
 			Listen: Listen{Transport: TransportStdio},
 			Backends: []Backend{{

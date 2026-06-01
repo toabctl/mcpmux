@@ -103,6 +103,13 @@ func (m *Mux) register(ctx context.Context, b *backend) (int, error) {
 				Arguments: req.Params.Arguments,
 			})
 		})
+		// Record the aggregated tool so Catalog can report it without a second
+		// round-trip to the backend.
+		b.tools = append(b.tools, ToolInfo{
+			Backend:     b.name,
+			Name:        proxied.Name,
+			Description: tool.Description,
+		})
 		// At debug level, list each tool with its description (one line per tool).
 		m.log.Debug("backend tool",
 			"backend", b.name,
@@ -124,23 +131,14 @@ type ToolInfo struct {
 	Description string // tool description, as advertised by the backend
 }
 
-// Catalog returns the aggregated tools across all backends, with descriptions.
-func (m *Mux) Catalog(ctx context.Context) ([]ToolInfo, error) {
+// Catalog returns the aggregated tools across all backends, captured when each
+// backend was registered (no additional backend round-trips).
+func (m *Mux) Catalog() []ToolInfo {
 	var out []ToolInfo
 	for _, b := range m.backends {
-		res, err := b.session.ListTools(ctx, nil)
-		if err != nil {
-			return nil, fmt.Errorf("list tools for backend %q: %w", b.name, err)
-		}
-		for _, t := range res.Tools {
-			out = append(out, ToolInfo{
-				Backend:     b.name,
-				Name:        toolName(b.name, t.Name),
-				Description: t.Description,
-			})
-		}
+		out = append(out, b.tools...)
 	}
-	return out, nil
+	return out
 }
 
 // ServeStdio runs the proxy over stdin/stdout until ctx is cancelled.
@@ -186,13 +184,20 @@ func (m *Mux) ServeHTTPListener(ctx context.Context, ln net.Listener, path strin
 	}
 
 	// On shutdown, drain in-flight requests with a bounded grace period. ctx is
-	// already cancelled here, so a fresh background context is required.
+	// already cancelled here, so a fresh background context is required. The
+	// serveDone channel lets this goroutine exit if Serve returns on its own
+	// (e.g. a fatal error) before ctx is cancelled, rather than leaking.
+	serveDone := make(chan struct{})
+	defer close(serveDone)
 	go func() { //nolint:gosec // G118: the request context is intentionally not reused (it is done).
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			_ = srv.Close()
+		select {
+		case <-ctx.Done():
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := srv.Shutdown(shutdownCtx); err != nil {
+				_ = srv.Close()
+			}
+		case <-serveDone:
 		}
 	}()
 

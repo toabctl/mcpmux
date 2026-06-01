@@ -30,6 +30,11 @@ import (
 // execTimeout bounds a single credential-helper invocation.
 const execTimeout = 30 * time.Second
 
+// defaultTTL is the fallback cache validity for an opaque (non-JWT) token when
+// no positive TTL is supplied. It mirrors config.defaultTokenTTL; callers
+// normally pass that value through, so this only guards direct construction.
+const defaultTTL = 5 * time.Minute
+
 // runnerFunc executes a credential helper and returns its stdout. It is a seam
 // for testing.
 type runnerFunc func(ctx context.Context, argv []string) ([]byte, error)
@@ -57,7 +62,7 @@ type ExecTokenSource struct {
 // claim takes precedence. ctx bounds the lifetime of all invocations.
 func NewExecTokenSource(ctx context.Context, argv []string, ttl time.Duration) *ExecTokenSource {
 	if ttl <= 0 {
-		ttl = 5 * time.Minute
+		ttl = defaultTTL
 	}
 	return &ExecTokenSource{
 		ctx:    ctx,

@@ -28,6 +28,9 @@ const oauthConnectTimeout = 10 * time.Minute
 type backend struct {
 	name    string
 	session *mcp.ClientSession
+	// tools is the backend's aggregated tool catalog, captured at registration
+	// so Catalog can report it without re-querying the backend.
+	tools []ToolInfo
 }
 
 // connectBackend dials a single upstream server and returns an open session.

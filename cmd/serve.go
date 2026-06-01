@@ -18,6 +18,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// noClientAuthWarning is logged when mcpmux binds a non-loopback address: the
+// client->mcpmux hop is unauthenticated, so anyone who can reach it can use
+// every backend with its credentials.
+const noClientAuthWarning = "listening on a non-loopback address with no client authentication: " +
+	"anyone who can reach this address can use every backend with its credentials"
+
 func newServeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "serve",
@@ -25,7 +31,6 @@ func newServeCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			log := newLogger()
-			mux.SetVersion(version)
 
 			cfg, err := loadConfig(log)
 			if err != nil {
@@ -53,12 +58,13 @@ func newServeCmd() *cobra.Command {
 			// the configured address ourselves.
 			if ln := firstListener(log); ln != nil {
 				log.Info("using socket-activated listener", "address", ln.Addr().String())
+				if !listenerIsLoopback(ln) {
+					log.Warn(noClientAuthWarning, "address", ln.Addr().String())
+				}
 				return m.ServeHTTPListener(ctx, ln, cfg.Listen.Path)
 			}
 			if !cfg.Listen.IsLoopback() {
-				log.Warn("listening on a non-loopback address with no client authentication: "+
-					"anyone who can reach this address can use every backend with its credentials",
-					"address", cfg.Listen.Address)
+				log.Warn(noClientAuthWarning, "address", cfg.Listen.Address)
 			}
 			return m.ServeHTTP(ctx, cfg.Listen.Address, cfg.Listen.Path)
 		},
@@ -79,4 +85,13 @@ func firstListener(log *slog.Logger) net.Listener {
 		}
 	}
 	return nil
+}
+
+// listenerIsLoopback reports whether ln is bound to a loopback address. A
+// non-TCP listener (e.g. a unix socket) is treated as local and safe.
+func listenerIsLoopback(ln net.Listener) bool {
+	if a, ok := ln.Addr().(*net.TCPAddr); ok {
+		return a.IP.IsLoopback()
+	}
+	return true
 }
