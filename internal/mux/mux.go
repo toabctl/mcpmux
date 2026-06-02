@@ -51,7 +51,7 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Mux, error
 	for _, bc := range cfg.Backends {
 		// A single bad backend (auth failure, server down) must not take down
 		// the whole proxy: log it and carry on with the rest.
-		b, err := connectBackend(ctx, bc, log)
+		b, err := connectBackend(ctx, bc, cfg.EagerAuth, log)
 		if err != nil {
 			log.Warn("skipping backend: connect failed", "backend", bc.Name, "err", err)
 			continue

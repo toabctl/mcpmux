@@ -84,6 +84,40 @@ func NewOAuthHandler(ctx context.Context, log *slog.Logger, o OAuthOptions) (sdk
 	return h, nil
 }
 
+// EagerAuthorize forces an interactive OAuth handler to run its
+// authorization-code flow now, instead of lazily on the first 401 from a tool
+// call. This lets a daemon batch all browser consents at startup rather than
+// surfacing them at random times mid session.
+//
+// It is a no-op when the handler already holds a token — e.g. servers that
+// challenge the initialize request authorize during connect, so only the
+// lazy ones (whose initialize returns 200) are driven here. The 401 the handler
+// expects is synthesized with an empty challenge; the SDK then discovers the
+// protected-resource metadata from the endpoint's well-known path. Serialized
+// with live flows via the shared authMu, so consents still open one at a time.
+func EagerAuthorize(ctx context.Context, h sdkauth.OAuthHandler, endpoint, label string, log *slog.Logger) error {
+	if h == nil {
+		return nil
+	}
+	if ts, err := h.TokenSource(ctx); err == nil && ts != nil {
+		if _, err := ts.Token(); err == nil {
+			return nil // already authorized (e.g. challenged during connect)
+		}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, http.NoBody)
+	if err != nil {
+		return err
+	}
+	log.Info("eagerly authorizing backend at startup", "backend", label)
+	resp := &http.Response{
+		StatusCode: http.StatusUnauthorized,
+		Header:     http.Header{},
+		Body:       http.NoBody,
+		Request:    req,
+	}
+	return h.Authorize(ctx, req, resp)
+}
+
 // clientMetadata builds the dynamic client registration metadata for a backend
 // from its OAuth options. ClientName defaults to "mcpmux"; Scopes are joined
 // into a space-separated scope string.

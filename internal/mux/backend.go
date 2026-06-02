@@ -35,7 +35,10 @@ type backend struct {
 }
 
 // connectBackend dials a single upstream server and returns an open session.
-func connectBackend(ctx context.Context, b config.Backend, log *slog.Logger) (*backend, error) {
+// When eager is set, an interactive OAuth backend that did not authorize during
+// connect (its server's initialize returned 200 rather than a 401) is driven
+// through its authorization flow now, so all browser consents happen at startup.
+func connectBackend(ctx context.Context, b config.Backend, eager bool, log *slog.Logger) (*backend, error) {
 	client := mcp.NewClient(&mcp.Implementation{Name: clientName, Version: clientVersion}, nil)
 
 	transport, err := transportFor(ctx, b, log)
@@ -55,6 +58,17 @@ func connectBackend(ctx context.Context, b config.Backend, log *slog.Logger) (*b
 	session, err := client.Connect(connectCtx, transport, nil)
 	if err != nil {
 		return nil, fmt.Errorf("connect backend %q: %w", b.Name, err)
+	}
+
+	// Batch all interactive consents at startup rather than letting them pop up
+	// on a later tool call. Best-effort: if it fails (e.g. the user dismisses the
+	// window), the backend stays up and authorizes lazily on first use instead.
+	if eager && b.Transport == config.TransportHTTP && b.Auth.Type == config.AuthOAuth {
+		if st, ok := transport.(*mcp.StreamableClientTransport); ok {
+			if err := auth.EagerAuthorize(connectCtx, st.OAuthHandler, b.Endpoint, b.Name, log); err != nil {
+				log.Warn("eager auth failed; backend will authorize lazily", "backend", b.Name, "err", err)
+			}
+		}
 	}
 	return &backend{name: b.Name, session: session}, nil
 }
