@@ -61,6 +61,12 @@ const defaultTokenTTL = 5 * time.Minute
 type Config struct {
 	Listen   Listen    `yaml:"listen"`
 	Backends []Backend `yaml:"backends"`
+	// EagerAuth makes interactive OAuth backends authorize during startup
+	// instead of lazily on their first tool call, so all browser consents
+	// happen together when the daemon starts rather than at random times mid
+	// session. Backends that already authorize during connect (their server
+	// challenges the initialize request) are unaffected.
+	EagerAuth bool `yaml:"eager_auth"`
 }
 
 // Listen configures the single MCP endpoint mcpmux exposes to its client.
