@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/toabctl/mcpmux/internal/config"
@@ -32,48 +33,102 @@ func SetVersion(v string) { clientVersion = v }
 
 // Mux aggregates several backend MCP servers behind a single proxy server.
 type Mux struct {
-	log      *slog.Logger
-	server   *mcp.Server
+	log    *slog.Logger
+	server *mcp.Server
+
+	mu       sync.Mutex // guards backends
 	backends []*backend
+
+	// wg tracks background Connect goroutines so Close can wait for them.
+	wg sync.WaitGroup
 }
 
-// New connects to every configured backend, aggregates their tools onto a
-// single proxy server and returns a ready-to-serve Mux. On any error the
-// already-opened backends are closed before returning. The caller owns Close.
-func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Mux, error) {
+// NewServer builds an unconnected Mux: the proxy server and its middleware, with
+// no backends attached. Callers bring backends up with Connect /
+// ConnectInBackground. This lets a daemon start serving (and signal systemd
+// readiness) before interactive OAuth backends have finished authorizing.
+func NewServer(cfg *config.Config, log *slog.Logger) *Mux {
 	m := &Mux{
 		log:    log,
 		server: mcp.NewServer(&mcp.Implementation{Name: clientName, Version: clientVersion}, serverOptions(cfg)),
 	}
 	// Debug-log every inbound request from the client (no-op unless --log-level debug).
 	m.server.AddReceivingMiddleware(requestLogger(log))
+	return m
+}
 
-	for _, bc := range cfg.Backends {
-		// A single bad backend (auth failure, server down) must not take down
-		// the whole proxy: log it and carry on with the rest.
-		b, err := connectBackend(ctx, bc, cfg.EagerAuth, log)
-		if err != nil {
-			log.Warn("skipping backend: connect failed", "backend", bc.Name, "err", err)
-			continue
-		}
-		b.desc = bc.Description
-
-		n, err := m.register(ctx, b)
-		if err != nil {
-			log.Warn("skipping backend: list tools failed", "backend", bc.Name, "err", err)
-			_ = b.session.Close()
-			continue
-		}
-
-		m.backends = append(m.backends, b)
-		log.Info("registered backend", "backend", b.name, "tools", n)
-	}
-
-	if len(m.backends) == 0 {
+// New connects to every configured backend synchronously, aggregates their tools
+// and returns a ready Mux. It is used by callers that want the full catalog
+// before proceeding (e.g. the `list` command); it blocks on any interactive
+// OAuth consent. On zero connected backends it returns an error. The caller owns
+// Close.
+func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Mux, error) {
+	m := NewServer(cfg, log)
+	m.Connect(ctx, cfg.Backends, cfg.EagerAuth)
+	m.mu.Lock()
+	n := len(m.backends)
+	m.mu.Unlock()
+	if n == 0 {
 		m.Close()
 		return nil, fmt.Errorf("no backends could be connected")
 	}
 	return m, nil
+}
+
+// Connect dials the given backends sequentially, registering each one's tools as
+// it succeeds and logging+skipping failures (one bad backend must not take down
+// the proxy). Sequential iteration keeps interactive OAuth consents to one
+// browser window at a time. It returns the number of backends connected. Safe to
+// call after the server has started serving: tool registration notifies
+// connected clients via tools/list_changed.
+func (m *Mux) Connect(ctx context.Context, backends []config.Backend, eager bool) int {
+	connected := 0
+	for _, bc := range backends {
+		n, err := m.connectOne(ctx, bc, eager)
+		if err != nil {
+			m.log.Warn("skipping backend", "backend", bc.Name, "err", err)
+			continue
+		}
+		m.log.Info("registered backend", "backend", bc.Name, "tools", n)
+		connected++
+	}
+	return connected
+}
+
+// ConnectInBackground connects the given backends in a goroutine so their
+// interactive OAuth consents happen after the proxy is already serving, instead
+// of blocking startup. Close waits for the goroutine to finish. A nil/empty
+// slice is a no-op.
+func (m *Mux) ConnectInBackground(ctx context.Context, backends []config.Backend, eager bool) {
+	if len(backends) == 0 {
+		return
+	}
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		m.Connect(ctx, backends, eager)
+	}()
+}
+
+// connectOne dials a single backend and registers its tools on the proxy server,
+// recording it under m.mu. It returns the number of tools registered.
+func (m *Mux) connectOne(ctx context.Context, bc config.Backend, eager bool) (int, error) {
+	b, err := connectBackend(ctx, bc, eager, m.log)
+	if err != nil {
+		return 0, fmt.Errorf("connect failed: %w", err)
+	}
+	b.desc = bc.Description
+
+	n, err := m.register(ctx, b)
+	if err != nil {
+		_ = b.session.Close()
+		return 0, fmt.Errorf("list tools failed: %w", err)
+	}
+
+	m.mu.Lock()
+	m.backends = append(m.backends, b)
+	m.mu.Unlock()
+	return n, nil
 }
 
 // register pulls a backend's tool catalog and exposes each tool on the proxy
@@ -172,6 +227,8 @@ type ToolInfo struct {
 // Catalog returns the aggregated tools across all backends, captured when each
 // backend was registered (no additional backend round-trips).
 func (m *Mux) Catalog() []ToolInfo {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	var out []ToolInfo
 	for _, b := range m.backends {
 		out = append(out, b.tools...)
@@ -246,8 +303,14 @@ func (m *Mux) ServeHTTPListener(ctx context.Context, ln net.Listener, path strin
 	return nil
 }
 
-// Close shuts down every backend session.
+// Close shuts down every backend session. It first waits for any in-flight
+// background Connect to return (the caller is expected to have cancelled the
+// context, which aborts an in-progress connect/consent) so closing sessions
+// cannot race the goroutine that registers them.
 func (m *Mux) Close() {
+	m.wg.Wait()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for _, b := range m.backends {
 		if b.session != nil {
 			_ = b.session.Close()
