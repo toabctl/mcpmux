@@ -34,6 +34,30 @@ type backend struct {
 	tools []ToolInfo
 }
 
+// isInteractive reports whether bringing a backend up may open a browser for an
+// interactive OAuth consent. Only HTTP backends using the authorization-code
+// (auth.type: oauth) flow do; everything else (command transports, static or
+// helper-command credentials) connects without human interaction.
+func isInteractive(b config.Backend) bool {
+	return b.Transport == config.TransportHTTP && b.Auth.Type == config.AuthOAuth
+}
+
+// PartitionBackends splits backends into those that connect without human
+// interaction and those that may prompt for an interactive OAuth consent,
+// preserving config order within each group. A daemon connects the
+// non-interactive group synchronously (so its tools and systemd readiness are
+// immediate) and the interactive group in the background.
+func PartitionBackends(backends []config.Backend) (noninteractive, interactive []config.Backend) {
+	for _, b := range backends {
+		if isInteractive(b) {
+			interactive = append(interactive, b)
+		} else {
+			noninteractive = append(noninteractive, b)
+		}
+	}
+	return noninteractive, interactive
+}
+
 // connectBackend dials a single upstream server and returns an open session.
 // When eager is set, an interactive OAuth backend that did not authorize during
 // connect (its server's initialize returned 200 rather than a 401) is driven

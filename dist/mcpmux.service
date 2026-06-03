@@ -28,8 +28,11 @@ After=mcpmux.socket network-online.target
 Wants=network-online.target
 
 [Service]
-# Type=notify: mcpmux signals readiness (sd_notify READY=1) once all backends
-# are connected, so systemd knows when the proxy is actually serving.
+# Type=notify: mcpmux signals readiness (sd_notify READY=1) once the
+# non-interactive backends are connected and it is serving. Interactive OAuth
+# backends authorize in the background afterwards (registering their tools as
+# each consent completes), so a slow/forgotten browser consent never blocks
+# readiness or trips TimeoutStartSec.
 Type=notify
 NotifyAccess=main
 # Reads ~/.config/mcpmux/config.yaml by default; uses the socket from mcpmux.socket.

@@ -40,19 +40,27 @@ func newServeCmd() *cobra.Command {
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
 
-			m, err := mux.New(ctx, cfg, log)
-			if err != nil {
-				return err
-			}
+			m := mux.NewServer(cfg, log)
 			defer m.Close()
 
+			// Connect non-interactive backends now so their tools are ready
+			// immediately. Interactive OAuth backends (which open a browser) are
+			// deferred to the background so their consents block neither serving
+			// nor the systemd readiness signal — they register their tools via
+			// tools/list_changed as each consent completes.
+			syncBackends, oauthBackends := mux.PartitionBackends(cfg.Backends)
+			m.Connect(ctx, syncBackends, cfg.EagerAuth)
+
 			if cfg.Listen.Transport != config.TransportHTTP {
+				m.ConnectInBackground(ctx, oauthBackends, cfg.EagerAuth)
 				return m.ServeStdio(ctx)
 			}
 
-			// All backends are connected; tell systemd we're ready (no-op when
-			// not socket-activated / NOTIFY_SOCKET unset).
+			// Non-interactive backends are connected; tell systemd we're ready
+			// (no-op when not socket-activated / NOTIFY_SOCKET unset), then bring
+			// up the interactive OAuth backends in the background.
 			_, _ = daemon.SdNotify(false, daemon.SdNotifyReady)
+			m.ConnectInBackground(ctx, oauthBackends, cfg.EagerAuth)
 
 			// Prefer a socket passed by systemd (socket activation) over binding
 			// the configured address ourselves.
