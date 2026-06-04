@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/toabctl/mcpmux/internal/config"
@@ -41,6 +42,11 @@ type Mux struct {
 
 	// wg tracks background Connect goroutines so Close can wait for them.
 	wg sync.WaitGroup
+	// svg tracks per-backend supervisor goroutines (the reconnect watchers).
+	svg sync.WaitGroup
+	// closing tells supervisors that a session closing during shutdown is
+	// intentional and must not trigger a reconnect.
+	closing atomic.Bool
 }
 
 // NewServer builds an unconnected Mux: the proxy server and its middleware, with
@@ -121,20 +127,26 @@ func (m *Mux) connectOne(ctx context.Context, bc config.Backend, eager bool) (in
 
 	n, err := m.register(ctx, b)
 	if err != nil {
-		_ = b.session.Close()
+		_ = b.current().Close()
 		return 0, fmt.Errorf("list tools failed: %w", err)
 	}
 
 	m.mu.Lock()
 	m.backends = append(m.backends, b)
 	m.mu.Unlock()
+
+	// Watch the backend and reconnect it if its session dies. ctx is the
+	// long-lived connect context (cancelled only at shutdown), so it bounds the
+	// supervisor's lifetime and any reconnect's transport build.
+	m.svg.Add(1)
+	go m.supervise(ctx, b)
 	return n, nil
 }
 
 // register pulls a backend's tool catalog and exposes each tool on the proxy
 // server under "<backend>__<tool>", forwarding invocations to the backend.
 func (m *Mux) register(ctx context.Context, b *backend) (int, error) {
-	res, err := b.session.ListTools(ctx, nil)
+	res, err := b.current().ListTools(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("list tools for backend %q: %w", b.name, err)
 	}
@@ -156,12 +168,12 @@ func (m *Mux) register(ctx context.Context, b *backend) (int, error) {
 			proxied.InputSchema = map[string]any{"type": "object"}
 		}
 
-		// Capture per-tool values for the closure.
-		session := b.session
+		// Capture the tool name for the closure. The session is read via
+		// b.current() per call (not captured) so it follows a reconnect swap.
 		origName := tool.Name
 
 		m.server.AddTool(&proxied, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			return session.CallTool(ctx, &mcp.CallToolParams{
+			return b.current().CallTool(ctx, &mcp.CallToolParams{
 				Name:      origName,
 				Arguments: req.Params.Arguments,
 			})
@@ -303,17 +315,22 @@ func (m *Mux) ServeHTTPListener(ctx context.Context, ln net.Listener, path strin
 	return nil
 }
 
-// Close shuts down every backend session. It first waits for any in-flight
-// background Connect to return (the caller is expected to have cancelled the
-// context, which aborts an in-progress connect/consent) so closing sessions
-// cannot race the goroutine that registers them.
+// Close shuts down every backend session. It first marks the Mux as closing (so
+// supervisors treat the impending session closures as intentional and do not
+// reconnect) and waits for any in-flight background Connect to return (the
+// caller is expected to have cancelled the context, which aborts an in-progress
+// connect/consent) so closing sessions cannot race the goroutine that registers
+// them. Closing each session unblocks its supervisor's Wait; once all sessions
+// are closed it waits for the supervisors to exit.
 func (m *Mux) Close() {
+	m.closing.Store(true)
 	m.wg.Wait()
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	for _, b := range m.backends {
-		if b.session != nil {
-			_ = b.session.Close()
+		if s := b.current(); s != nil {
+			_ = s.Close()
 		}
 	}
+	m.mu.Unlock()
+	m.svg.Wait()
 }
