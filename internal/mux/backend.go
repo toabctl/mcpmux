@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"sync/atomic"
 	"time"
 
 	"github.com/toabctl/mcpmux/internal/auth"
@@ -24,14 +25,47 @@ import (
 // TimeoutStartSec so mcpmux degrades gracefully rather than being killed.
 const oauthConnectTimeout = 10 * time.Minute
 
-// backend is a live client session to one upstream MCP server.
+// keepaliveInterval pings an otherwise idle backend so a half-open connection
+// is detected and closed promptly, waking the supervisor to reconnect.
+const keepaliveInterval = 30 * time.Second
+
+// backend is a live client session to one upstream MCP server. The session is
+// swapped atomically when the supervisor reconnects a dropped backend, so the
+// dialer (which knows how to re-establish the transport) is retained.
 type backend struct {
-	name    string
-	desc    string // optional operator description, surfaced to the client
-	session *mcp.ClientSession
+	name   string
+	desc   string // optional operator description, surfaced to the client
+	dialer dialer // re-establishes the transport on (re)connect
+	// session is the live client session, replaced atomically on reconnect;
+	// read it per request via current() rather than capturing it.
+	session atomic.Pointer[mcp.ClientSession]
 	// tools is the backend's aggregated tool catalog, captured at registration
 	// so Catalog can report it without re-querying the backend.
 	tools []ToolInfo
+}
+
+// current returns the backend's live session.
+func (b *backend) current() *mcp.ClientSession { return b.session.Load() }
+
+// connect dials the backend and opens a fresh session. The transport is built
+// with ctx (long-lived); an interactive backend's Connect is bounded so a
+// walked-away browser prompt can't hang forever. Used for both the initial
+// connect and every reconnect. KeepAlive lets the SDK notice a dead peer and
+// close the session, which the supervisor observes via session.Wait.
+func (b *backend) connect(ctx context.Context) (*mcp.ClientSession, error) {
+	transport, err := b.dialer.dial(ctx)
+	if err != nil {
+		return nil, err
+	}
+	connectCtx := ctx
+	if _, interactive := b.dialer.(eagerAuthorizer); interactive {
+		var cancel context.CancelFunc
+		connectCtx, cancel = context.WithTimeout(ctx, oauthConnectTimeout)
+		defer cancel()
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: clientName, Version: clientVersion},
+		&mcp.ClientOptions{KeepAlive: keepaliveInterval})
+	return client.Connect(connectCtx, transport, nil)
 }
 
 // PartitionBackends splits backends into those that connect without human
@@ -54,45 +88,34 @@ func PartitionBackends(backends []config.Backend) (noninteractive, interactive [
 // When eager is set, an interactive OAuth backend that did not authorize during
 // connect (its server's initialize returned 200 rather than a 401) is driven
 // through its authorization flow now, so all browser consents happen at startup.
-func connectBackend(ctx context.Context, b config.Backend, eager bool, log *slog.Logger) (*backend, error) {
-	d, err := newDialer(b, log)
+func connectBackend(ctx context.Context, bc config.Backend, eager bool, log *slog.Logger) (*backend, error) {
+	d, err := newDialer(bc, log)
 	if err != nil {
 		return nil, err
 	}
+	b := &backend{name: bc.Name, dialer: d}
 
-	transport, err := d.dial(ctx)
+	session, err := b.connect(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connect backend %q: %w", bc.Name, err)
 	}
-
-	// Only an eagerAuthorizer (interactive OAuth) can block on the user; bound
-	// its connect so a walked-away browser prompt doesn't hang startup forever
-	// (the backend is then skipped).
-	connectCtx := ctx
-	ea, interactive := d.(eagerAuthorizer)
-	if interactive {
-		var cancel context.CancelFunc
-		connectCtx, cancel = context.WithTimeout(ctx, oauthConnectTimeout)
-		defer cancel()
-	}
-
-	client := mcp.NewClient(&mcp.Implementation{Name: clientName, Version: clientVersion}, nil)
-	session, err := client.Connect(connectCtx, transport, nil)
-	if err != nil {
-		return nil, fmt.Errorf("connect backend %q: %w", b.Name, err)
-	}
+	b.session.Store(session)
 
 	// Batch all interactive consents at startup rather than letting them pop up
 	// on a later tool call. Best-effort: if it fails (e.g. the user dismisses the
 	// window), the backend stays up and authorizes lazily on first use instead.
 	// The dialer caches its transport, so this consent and the live session
 	// share one OAuthHandler.
-	if eager && interactive {
-		if err := ea.eagerAuthorize(connectCtx); err != nil {
-			log.Warn("eager auth failed; backend will authorize lazily", "backend", b.Name, "err", err)
+	if eager {
+		if ea, ok := d.(eagerAuthorizer); ok {
+			ectx, cancel := context.WithTimeout(ctx, oauthConnectTimeout)
+			if err := ea.eagerAuthorize(ectx); err != nil {
+				log.Warn("eager auth failed; backend will authorize lazily", "backend", bc.Name, "err", err)
+			}
+			cancel()
 		}
 	}
-	return &backend{name: b.Name, session: session}, nil
+	return b, nil
 }
 
 // transportFor builds the client transport for a backend from its config. ctx
