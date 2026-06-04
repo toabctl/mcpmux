@@ -34,14 +34,6 @@ type backend struct {
 	tools []ToolInfo
 }
 
-// isInteractive reports whether bringing a backend up may open a browser for an
-// interactive OAuth consent. Only HTTP backends using the authorization-code
-// (auth.type: oauth) flow do; everything else (command transports, static or
-// helper-command credentials) connects without human interaction.
-func isInteractive(b config.Backend) bool {
-	return b.Transport == config.TransportHTTP && b.Auth.Type == config.AuthOAuth
-}
-
 // PartitionBackends splits backends into those that connect without human
 // interaction and those that may prompt for an interactive OAuth consent,
 // preserving config order within each group. A daemon connects the
@@ -63,22 +55,28 @@ func PartitionBackends(backends []config.Backend) (noninteractive, interactive [
 // connect (its server's initialize returned 200 rather than a 401) is driven
 // through its authorization flow now, so all browser consents happen at startup.
 func connectBackend(ctx context.Context, b config.Backend, eager bool, log *slog.Logger) (*backend, error) {
-	client := mcp.NewClient(&mcp.Implementation{Name: clientName, Version: clientVersion}, nil)
-
-	transport, err := transportFor(ctx, b, log)
+	d, err := newDialer(b, log)
 	if err != nil {
 		return nil, err
 	}
 
-	// Interactive OAuth blocks on the user; bound it so a walked-away browser
-	// prompt doesn't hang startup forever (the backend is then skipped).
+	transport, err := d.dial(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Only an eagerAuthorizer (interactive OAuth) can block on the user; bound
+	// its connect so a walked-away browser prompt doesn't hang startup forever
+	// (the backend is then skipped).
 	connectCtx := ctx
-	if b.Transport == config.TransportHTTP && b.Auth.Type == config.AuthOAuth {
+	ea, interactive := d.(eagerAuthorizer)
+	if interactive {
 		var cancel context.CancelFunc
 		connectCtx, cancel = context.WithTimeout(ctx, oauthConnectTimeout)
 		defer cancel()
 	}
 
+	client := mcp.NewClient(&mcp.Implementation{Name: clientName, Version: clientVersion}, nil)
 	session, err := client.Connect(connectCtx, transport, nil)
 	if err != nil {
 		return nil, fmt.Errorf("connect backend %q: %w", b.Name, err)
@@ -87,11 +85,11 @@ func connectBackend(ctx context.Context, b config.Backend, eager bool, log *slog
 	// Batch all interactive consents at startup rather than letting them pop up
 	// on a later tool call. Best-effort: if it fails (e.g. the user dismisses the
 	// window), the backend stays up and authorizes lazily on first use instead.
-	if eager && b.Transport == config.TransportHTTP && b.Auth.Type == config.AuthOAuth {
-		if st, ok := transport.(*mcp.StreamableClientTransport); ok {
-			if err := auth.EagerAuthorize(connectCtx, st.OAuthHandler, b.Endpoint, b.Name, log); err != nil {
-				log.Warn("eager auth failed; backend will authorize lazily", "backend", b.Name, "err", err)
-			}
+	// The dialer caches its transport, so this consent and the live session
+	// share one OAuthHandler.
+	if eager && interactive {
+		if err := ea.eagerAuthorize(connectCtx); err != nil {
+			log.Warn("eager auth failed; backend will authorize lazily", "backend", b.Name, "err", err)
 		}
 	}
 	return &backend{name: b.Name, session: session}, nil
