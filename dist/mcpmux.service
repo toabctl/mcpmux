@@ -43,6 +43,9 @@ NotifyAccess=main
 # client). The leading "-" makes it optional. Keep it out of version control and
 # chmod 600 — it is NOT part of the (symlinked) config.
 EnvironmentFile=-%h/.config/mcpmux/mcpmux.env
+# systemd's minimal PATH omits per-user bin dirs; prepend them so auth token
+# commands (e.g. the cg-* backends' `chainctl`) resolve instead of being skipped.
+Environment=PATH=%h/bin:%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 ExecStart=%h/.local/bin/mcpmux serve --log-level debug
 Restart=on-failure
 RestartSec=5
