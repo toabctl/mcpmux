@@ -24,8 +24,13 @@
 [Unit]
 Description=mcpmux - MCP multiplexer (one endpoint proxying multiple MCP servers)
 Requires=mcpmux.socket
-After=mcpmux.socket network-online.target
+# Order after graphical-session.target so the desktop has already imported
+# DISPLAY/WAYLAND_DISPLAY/XAUTHORITY into the systemd --user environment before
+# mcpmux starts. A process's env is frozen at exec, so starting earlier means
+# interactive OAuth backends inherit no display and xdg-open silently no-ops.
+After=mcpmux.socket network-online.target graphical-session.target
 Wants=network-online.target
+PartOf=graphical-session.target
 
 [Service]
 # Type=notify: mcpmux signals readiness (sd_notify READY=1) once the
@@ -54,12 +59,14 @@ RestartSec=5
 # unapproved backend is skipped gracefully rather than the service being killed.
 TimeoutStartSec=660
 
-# Interactive OAuth backends (auth.type: oauth) open a browser at startup.
-# For auto-open to work from a user service, the graphical session environment
-# must be visible to systemd. Run once after login:
+# Interactive OAuth backends (auth.type: oauth) open a browser at startup. The
+# After=/PartOf=graphical-session.target ordering above ensures the graphical
+# session's environment is already imported when mcpmux starts, so xdg-open has
+# a display. If your desktop does not populate the systemd --user environment,
+# either run once after login:
 #   systemctl --user import-environment DISPLAY WAYLAND_DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS
-# Otherwise set `open_browser: false` on those backends and click the URL shown
-# in `journalctl --user -u mcpmux`.
+# or set `open_browser: false` on those backends and click the URL shown in
+# `journalctl --user -u mcpmux`.
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target
