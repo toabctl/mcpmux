@@ -140,7 +140,7 @@ type Auth struct {
 	TTL string `yaml:"ttl"`
 
 	// OAuth fields (Type "oauth").
-	Scopes       []string `yaml:"scopes"`        // optional requested scopes
+	Scopes       []string `yaml:"scopes"`        // allowlist: restricts/filters requested OAuth scopes
 	ClientName   string   `yaml:"client_name"`   // DCR client_name (default "mcpmux")
 	CallbackPort int      `yaml:"callback_port"` // fixed loopback port; 0 = ephemeral
 	// ClientID and ClientSecret use a pre-registered ("confidential") OAuth
