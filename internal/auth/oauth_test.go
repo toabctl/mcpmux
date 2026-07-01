@@ -10,11 +10,46 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	sdkauth "github.com/modelcontextprotocol/go-sdk/auth"
 )
+
+// TestHandleCallbackAutoClose verifies the auto-close script is emitted only on
+// the success page, not on the error or no-authorization pages.
+func TestHandleCallbackAutoClose(t *testing.T) {
+	tests := []struct {
+		name          string
+		waiting       bool // a receiver is registered, so delivery succeeds
+		query         string
+		wantTitle     string
+		wantAutoClose bool
+	}{
+		{"success", true, "code=abc&state=xyz", "Authorization complete", true},
+		{"error", true, "error=access_denied", "Authorization failed", false},
+		{"no auth in progress", false, "code=abc", "No authorization in progress", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := &browserAuthorizer{}
+			if tt.waiting {
+				a.waiting = make(chan callbackResult, 1)
+			}
+			rec := httptest.NewRecorder()
+			a.handleCallback(rec, httptest.NewRequest(http.MethodGet, "/callback?"+tt.query, nil))
+			body := rec.Body.String()
+			if !strings.Contains(body, tt.wantTitle) {
+				t.Errorf("body missing title %q: %s", tt.wantTitle, body)
+			}
+			if got := strings.Contains(body, "window.close()"); got != tt.wantAutoClose {
+				t.Errorf("auto-close present = %v, want %v", got, tt.wantAutoClose)
+			}
+		})
+	}
+}
 
 // freePort returns a currently-free loopback TCP port.
 func freePort(t *testing.T) int {
