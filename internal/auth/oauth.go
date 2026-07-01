@@ -227,11 +227,11 @@ func (a *browserAuthorizer) handleCallback(w http.ResponseWriter, r *http.Reques
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	switch {
 	case res.errMsg != "":
-		_, _ = fmt.Fprintf(w, callbackPage, "Authorization failed", html.EscapeString(res.errMsg))
+		_, _ = fmt.Fprintf(w, callbackPage, "Authorization failed", html.EscapeString(res.errMsg), "")
 	case delivered:
-		_, _ = fmt.Fprintf(w, callbackPage, "Authorization complete", "You can close this tab and return to mcpmux.")
+		_, _ = fmt.Fprintf(w, callbackPage, "Authorization complete", "This tab will close automatically; you can return to mcpmux.", autoCloseScript)
 	default:
-		_, _ = fmt.Fprintf(w, callbackPage, "No authorization in progress", "You can close this tab.")
+		_, _ = fmt.Fprintf(w, callbackPage, "No authorization in progress", "You can close this tab.", "")
 	}
 }
 
@@ -321,4 +321,9 @@ body{font-family:system-ui,sans-serif;background:#0f1115;color:#e6e6e6;
 display:flex;height:100vh;margin:0;align-items:center;justify-content:center}
 .card{text-align:center;padding:2rem 3rem;background:#171a21;border-radius:12px}
 h1{font-size:1.25rem;margin:0 0 .5rem}p{margin:0;color:#9aa0aa}
-</style></head><body><div class="card"><h1>%s</h1><p>%s</p></div></body></html>`
+</style></head><body><div class="card"><h1>%s</h1><p>%s</p></div>%s</body></html>`
+
+// autoCloseScript tries to close the tab a few seconds after a successful
+// authorization. Browsers only honor window.close() for script-opened windows,
+// so this is best-effort; the page still tells the user they can close it.
+const autoCloseScript = `<script>setTimeout(function(){window.close()},5000)</script>`
