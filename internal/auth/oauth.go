@@ -26,7 +26,9 @@ import (
 type OAuthOptions struct {
 	// Label identifies the backend in prompts and logs.
 	Label string
-	// Scopes optionally requested at registration/authorization.
+	// Scopes optionally restricts the OAuth scopes: the advertised scope for
+	// dynamic registration, and an allowlist filtering the server's advertised
+	// scopes for the auth-code flow. Empty requests whatever the server offers.
 	Scopes []string
 	// ClientName is the DCR client_name presented to the user (default "mcpmux").
 	ClientName string
@@ -60,10 +62,10 @@ func NewOAuthHandler(ctx context.Context, log *slog.Logger, o OAuthOptions) (sdk
 		RedirectURL:              ba.redirect,
 		AuthorizationCodeFetcher: ba.fetch,
 	}
-	if o.AllowIssuerMismatch {
-		// Normalize the AS-metadata issuer so the SDK's RFC 8414 check accepts a
-		// server (e.g. Slack) whose metadata declares a mismatched issuer.
-		cfg.Client = issuerNormalizingClient()
+	// Configured scopes filter the server-advertised set (the SDK has no scope
+	// override); this also normalizes issuer mismatches when requested.
+	if client := metadataRewritingClient(o.AllowIssuerMismatch, o.Scopes); client != nil {
+		cfg.Client = client
 	}
 	if o.ClientID != "" {
 		// Pre-registered client: the server doesn't support dynamic client
