@@ -229,7 +229,7 @@ func (a *browserAuthorizer) handleCallback(w http.ResponseWriter, r *http.Reques
 	case res.errMsg != "":
 		_, _ = fmt.Fprintf(w, callbackPage, "Authorization failed", html.EscapeString(res.errMsg), "")
 	case delivered:
-		_, _ = fmt.Fprintf(w, callbackPage, "Authorization complete", "This tab will close automatically; you can return to mcpmux.", autoCloseScript)
+		_, _ = fmt.Fprintf(w, callbackPage, "Authorization complete", "You can close this tab and return to mcpmux.", autoCloseScript)
 	default:
 		_, _ = fmt.Fprintf(w, callbackPage, "No authorization in progress", "You can close this tab.", "")
 	}

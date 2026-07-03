@@ -50,8 +50,13 @@ NotifyAccess=main
 EnvironmentFile=-%h/.config/mcpmux/mcpmux.env
 # systemd's minimal PATH omits per-user bin dirs; prepend them so auth token
 # commands (e.g. the cg-* backends' `chainctl`) resolve instead of being skipped.
-Environment=PATH=%h/bin:%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
-ExecStart=%h/.local/bin/mcpmux serve --log-level debug
+# /snap/bin is included so `go` (a snap) is on PATH for the ExecStart wrapper below.
+Environment=PATH=%h/bin:%h/.local/bin:/snap/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+# Resolve `mcpmux` from PATH rather than a fixed path, so it works whether the
+# binary was installed by `make install` (~/.local/bin) or `go install` (which
+# tool-up uses — it lands in $GOPATH/bin). A static Environment=PATH can't run
+# `go env`, so a small wrapper prepends $(go env GOPATH)/bin when go is present.
+ExecStart=/bin/bash -c 'if command -v go >/dev/null 2>&1; then export PATH="$(go env GOPATH)/bin:$PATH"; fi; exec mcpmux serve --log-level debug'
 Restart=on-failure
 RestartSec=5
 # Allow time for an interactive browser authorization (e.g. Linear) at startup.
