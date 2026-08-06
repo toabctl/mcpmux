@@ -7,6 +7,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # Tracked on upstream main by update-go-sdk.yml; a release tag would
+      # semver-"upgrade" the pseudo-version pin to older code (see PR #19).
+      - dependency-name: github.com/modelcontextprotocol/go-sdk
     groups:
       go-modules:
         patterns: ["*"]

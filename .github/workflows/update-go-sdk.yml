@@ -1,0 +1,55 @@
+# SPDX-FileCopyrightText: 2026 Thomas Bechtold <thomasbechtold@jpberlin.de>
+# SPDX-License-Identifier: Apache-2.0
+
+# Tracks go-sdk on upstream main (dependabot only follows release tags and
+# would downgrade a pseudo-version pin, see PR #19). Opens a weekly PR that
+# auto-merges once the required CI checks pass. Delete this workflow (and the
+# dependabot ignore rule) to go back to release tracking.
+name: Update go-sdk to upstream main
+
+on:
+  schedule:
+    - cron: "17 5 * * 1" # Monday mornings, before dependabot's weekly run
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write # to dispatch ci.yml on the PR branch
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+      - name: Bump to latest upstream main
+        run: |
+          go get github.com/modelcontextprotocol/go-sdk@main
+          go mod tidy
+      - name: Open auto-merging PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if git diff --quiet go.mod go.sum; then
+            echo "already at latest main"
+            exit 0
+          fi
+          version=$(go list -m -f '{{.Version}}' github.com/modelcontextprotocol/go-sdk)
+          branch=update-go-sdk-main
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add go.mod go.sum
+          git commit -m "build(deps): bump go-sdk to upstream main ($version)"
+          git push -f origin "$branch"
+          if [ -z "$(gh pr list --head "$branch" --json number --jq '.[0].number')" ]; then
+            gh pr create --head "$branch" --fill \
+              --body "Automated bump of github.com/modelcontextprotocol/go-sdk to upstream main ($version)."
+          fi
+          # PRs from GITHUB_TOKEN don't trigger pull_request workflows; run the
+          # required checks on the branch head via workflow_dispatch instead.
+          gh workflow run ci.yml --ref "$branch"
+          gh pr merge --auto --squash "$branch"

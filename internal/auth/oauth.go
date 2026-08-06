@@ -62,10 +62,13 @@ func NewOAuthHandler(ctx context.Context, log *slog.Logger, o OAuthOptions) (sdk
 		RedirectURL:              ba.redirect,
 		AuthorizationCodeFetcher: ba.fetch,
 	}
-	// Configured scopes filter the server-advertised set (the SDK has no scope
-	// override); this also normalizes issuer mismatches when requested.
-	if client := metadataRewritingClient(o.AllowIssuerMismatch, o.Scopes); client != nil {
-		cfg.Client = client
+	if o.AllowIssuerMismatch {
+		cfg.Client = issuerNormalizingClient()
+	}
+	// Configured scopes restrict the server-advertised set via the SDK's
+	// ScopeFilter hook, which runs before offline_access and the step-up union.
+	if len(o.Scopes) > 0 {
+		cfg.ScopeFilter = scopeAllowlist(o.Scopes)
 	}
 	if o.ClientID != "" {
 		// Pre-registered client: the server doesn't support dynamic client
@@ -118,6 +121,30 @@ func EagerAuthorize(ctx context.Context, h sdkauth.OAuthHandler, endpoint, label
 		Request:    req,
 	}
 	return h.Authorize(ctx, req, resp)
+}
+
+// scopeAllowlist returns a ScopeFilter restricting the discovered scopes to
+// those in allow, preserving discovery order (e.g. dropping Gmail's
+// gmail.metadata, which disables the search "q" param even alongside
+// gmail.readonly). An empty intersection leaves the discovered set unchanged
+// so a bad allowlist can't make the client request no scopes at all.
+func scopeAllowlist(allow []string) func(discovered []string) []string {
+	want := make(map[string]bool, len(allow))
+	for _, s := range allow {
+		want[s] = true
+	}
+	return func(discovered []string) []string {
+		kept := make([]string, 0, len(discovered))
+		for _, s := range discovered {
+			if want[s] {
+				kept = append(kept, s)
+			}
+		}
+		if len(kept) == 0 {
+			return discovered
+		}
+		return kept
+	}
 }
 
 // clientMetadata builds the dynamic client registration metadata for a backend
