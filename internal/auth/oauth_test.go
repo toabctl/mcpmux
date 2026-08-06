@@ -204,6 +204,24 @@ func TestNewOAuthHandler_DynamicRegistration(t *testing.T) {
 	}
 }
 
+func TestScopeAllowlist(t *testing.T) {
+	f := scopeAllowlist([]string{"gmail.readonly", "gmail.compose"})
+
+	// Restricts to allowlist members, preserving discovery order and dropping
+	// the poisonous gmail.metadata (and everything else not allowed).
+	got := f([]string{"https://mail.google.com/", "gmail.compose", "gmail.readonly", "gmail.metadata"})
+	if strings.Join(got, " ") != "gmail.compose gmail.readonly" {
+		t.Errorf("filtered scopes = %q, want %q", got, "gmail.compose gmail.readonly")
+	}
+
+	// Empty intersection fails open: the discovered set is returned unchanged
+	// so a bad allowlist can't make the client request no scopes at all.
+	discovered := []string{"a", "b"}
+	if got := f(discovered); strings.Join(got, " ") != "a b" {
+		t.Errorf("empty intersection must leave scopes unchanged, got %q", got)
+	}
+}
+
 func TestClientMetadata(t *testing.T) {
 	m := clientMetadata(OAuthOptions{Scopes: []string{"read", "write"}}, "http://127.0.0.1:1/callback")
 	if m.ClientName != "mcpmux" {

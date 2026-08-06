@@ -12,46 +12,20 @@ import (
 	"strings"
 )
 
-// metadataRewritingClient returns an *http.Client that rewrites well-known OAuth
-// metadata before the SDK reads it, or nil when no rewrite is requested.
-// normalizeIssuer fixes RFC 8414 issuer mismatches (Slack's declared issuer;
-// Google's trailing-slash authorization_servers). allowScopes restricts a
-// protected resource's advertised scopes_supported to an allowlist — the only
-// way to drop an unwanted scope, since the SDK requests whatever it discovers
-// (e.g. Gmail's gmail.metadata disables the search "q" param even alongside
-// gmail.readonly). Other requests, and endpoints inside the metadata, are
-// untouched. Assumes a path-less authorization server (issuer is scheme://host).
-func metadataRewritingClient(normalizeIssuer bool, allowScopes []string) *http.Client {
-	if !normalizeIssuer && len(allowScopes) == 0 {
-		return nil
-	}
-	var allow map[string]bool
-	if len(allowScopes) > 0 {
-		allow = make(map[string]bool, len(allowScopes))
-		for _, s := range allowScopes {
-			allow[s] = true
-		}
-	}
-	return &http.Client{Transport: &metadataRewritingTransport{
-		base:            http.DefaultTransport,
-		normalizeIssuer: normalizeIssuer,
-		allowScopes:     allow,
-	}}
-}
-
-// issuerNormalizingClient returns a client that only normalizes issuer
-// mismatches (see metadataRewritingClient).
+// issuerNormalizingClient returns an *http.Client that rewrites well-known
+// OAuth metadata before the SDK reads it, fixing RFC 8414 issuer mismatches
+// (Slack's declared issuer; Google's trailing-slash authorization_servers).
+// Other requests, and endpoints inside the metadata, are untouched. Assumes a
+// path-less authorization server (issuer is scheme://host).
 func issuerNormalizingClient() *http.Client {
-	return metadataRewritingClient(true, nil)
+	return &http.Client{Transport: &issuerNormalizingTransport{base: http.DefaultTransport}}
 }
 
-type metadataRewritingTransport struct {
-	base            http.RoundTripper
-	normalizeIssuer bool
-	allowScopes     map[string]bool // nil: no scope filtering
+type issuerNormalizingTransport struct {
+	base http.RoundTripper
 }
 
-func (t *metadataRewritingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+func (t *issuerNormalizingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := t.base.RoundTrip(req)
 	if err != nil || resp == nil {
 		return resp, err
@@ -72,7 +46,7 @@ func (t *metadataRewritingTransport) RoundTrip(req *http.Request) (*http.Respons
 	var meta map[string]any
 	if json.Unmarshal(body, &meta) == nil {
 		changed := false
-		if t.normalizeIssuer && isAuthServer {
+		if isAuthServer {
 			want := req.URL.Scheme + "://" + req.URL.Host
 			if iss, ok := meta["issuer"].(string); ok && iss != want {
 				meta["issuer"] = want
@@ -80,24 +54,16 @@ func (t *metadataRewritingTransport) RoundTrip(req *http.Request) (*http.Respons
 			}
 		}
 		if isProtectedResource {
-			if t.normalizeIssuer {
-				// Strip trailing slashes from authorization_servers so the SDK's
-				// byte-exact issuer check matches the AS metadata's path-less issuer.
-				if servers, ok := meta["authorization_servers"].([]any); ok {
-					for i, v := range servers {
-						if s, ok := v.(string); ok {
-							if trimmed := strings.TrimRight(s, "/"); trimmed != s {
-								servers[i] = trimmed
-								changed = true
-							}
+			// Strip trailing slashes from authorization_servers so the SDK's
+			// byte-exact issuer check matches the AS metadata's path-less issuer.
+			if servers, ok := meta["authorization_servers"].([]any); ok {
+				for i, v := range servers {
+					if s, ok := v.(string); ok {
+						if trimmed := strings.TrimRight(s, "/"); trimmed != s {
+							servers[i] = trimmed
+							changed = true
 						}
 					}
-				}
-			}
-			if len(t.allowScopes) > 0 {
-				if filtered, ok := filterScopes(meta["scopes_supported"], t.allowScopes); ok {
-					meta["scopes_supported"] = filtered
-					changed = true
 				}
 			}
 		}
@@ -112,25 +78,4 @@ func (t *metadataRewritingTransport) RoundTrip(req *http.Request) (*http.Respons
 	resp.ContentLength = int64(len(body))
 	resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
 	return resp, nil
-}
-
-// filterScopes restricts advertised scopes_supported (a []any of strings) to
-// those in allow, preserving order, and reports whether it changed anything.
-// An empty intersection is left as no change so a bad allowlist can't make the
-// client request no scopes at all.
-func filterScopes(advertised any, allow map[string]bool) ([]any, bool) {
-	list, ok := advertised.([]any)
-	if !ok {
-		return nil, false
-	}
-	kept := make([]any, 0, len(list))
-	for _, v := range list {
-		if s, ok := v.(string); ok && allow[s] {
-			kept = append(kept, v)
-		}
-	}
-	if len(kept) == 0 || len(kept) == len(list) {
-		return nil, false
-	}
-	return kept, true
 }
