@@ -15,7 +15,6 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  actions: write # to dispatch ci.yml on the PR branch
 
 jobs:
   update:
@@ -49,7 +48,4 @@ jobs:
             gh pr create --head "$branch" --fill \
               --body "Automated bump of github.com/modelcontextprotocol/go-sdk to upstream main ($version)."
           fi
-          # PRs from GITHUB_TOKEN don't trigger pull_request workflows; run the
-          # required checks on the branch head via workflow_dispatch instead.
-          gh workflow run ci.yml --ref "$branch"
           gh pr merge --auto --squash "$branch"
