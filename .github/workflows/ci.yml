@@ -7,8 +7,7 @@ on:
   pull_request:
   push:
     branches: [main]
-  # Lets update-go-sdk.yml run CI on its PR branch: PRs opened with
-  # GITHUB_TOKEN don't trigger pull_request workflows.
+  # For manually re-running CI on a branch.
   workflow_dispatch:
 
 permissions:
