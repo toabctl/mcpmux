@@ -17,6 +17,14 @@
 #
 #   journalctl --user -u mcpmux -f       # watch logs / OAuth URLs
 #
+# A backend whose credential was unavailable at startup is retried in the
+# background (see `connect_retry` in the config) and logged as "backend
+# pending". After refreshing the credential, bring those backends up at once
+# without a restart -- a restart would re-trigger every interactive OAuth
+# consent, and would drop live client sessions:
+#
+#   systemctl --user kill -s USR1 mcpmux
+#
 # Running mcpmux as a long-lived user service is the point: you authenticate
 # backends once, and every Claude Code session reuses the daemon's live tokens
 # instead of re-authenticating per session.

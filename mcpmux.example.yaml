@@ -17,6 +17,24 @@ listen:
   # Clients connect to http://127.0.0.1:8080/mcp
   path: /mcp
 
+# What happens when a backend cannot be reached at startup. Every field is
+# optional; the defaults shown here apply when the block is omitted.
+connect_retry:
+  # Keep such a backend and retry it in the background instead of skipping it
+  # for the process's lifetime. Set to false for the old skip-only behavior.
+  # Interactive OAuth backends are never retried in the background — an attempt
+  # can open a browser — so they are still skipped and recovered with SIGUSR1.
+  enabled: true
+  # Ceiling on the exponential backoff between attempts (jittered ±20%).
+  max_delay: 15m
+  # Bound on a single connect attempt, so a peer that accepts the connection
+  # and then never answers initialize cannot wedge startup or the retry loop.
+  attempt_timeout: 2m
+# Send SIGUSR1 to retry every still-pending backend immediately — the recovery
+# path after refreshing an expired credential, with no restart (and so no
+# repeat of the interactive OAuth consents):
+#   systemctl --user kill -s USR1 mcpmux    # or: kill -USR1 $(pidof mcpmux)
+
 backends:
   # 1. Local subprocess (stdio). Secrets are passed via env.
   - name: files

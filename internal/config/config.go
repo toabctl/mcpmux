@@ -57,6 +57,14 @@ const (
 // is cached before the command is re-run.
 const defaultTokenTTL = 5 * time.Minute
 
+// Connect-retry defaults: the ceiling on the backoff between attempts to bring
+// up a backend that has never connected, and the bound on a single such
+// attempt.
+const (
+	defaultRetryMaxDelay       = 15 * time.Minute
+	defaultRetryAttemptTimeout = 2 * time.Minute
+)
+
 // Config is the top-level mcpmux configuration.
 type Config struct {
 	Listen   Listen    `yaml:"listen"`
@@ -67,6 +75,59 @@ type Config struct {
 	// session. Backends that already authorize during connect (their server
 	// challenges the initialize request) are unaffected.
 	EagerAuth bool `yaml:"eager_auth"`
+	// ConnectRetry governs backends that fail their initial connect.
+	ConnectRetry ConnectRetry `yaml:"connect_retry"`
+}
+
+// ConnectRetry configures how mcpmux treats a backend that fails its initial
+// connect. Without retry such a backend is skipped for the daemon's lifetime,
+// so a credential that was merely unavailable at startup — an expired token, an
+// upstream blip — costs that backend until the next restart, which is expensive
+// because it re-triggers every interactive OAuth consent.
+type ConnectRetry struct {
+	// Enabled turns the retry loop on, defaulting to true. When false, a
+	// backend that fails its first connect is skipped as it was before retry
+	// existed, including keeping an unbounded first attempt.
+	Enabled *bool `yaml:"enabled"`
+	// MaxDelay caps the exponential backoff between attempts (default 15m).
+	MaxDelay string `yaml:"max_delay"`
+	// AttemptTimeout bounds a single connect attempt for a non-interactive
+	// backend (default 2m), so an upstream that accepts the connection and then
+	// never answers initialize cannot wedge startup or the retry loop. It only
+	// applies when retry is enabled, because it is retry that makes a timed-out
+	// attempt recoverable. Interactive OAuth backends are bounded separately,
+	// by the browser-consent timeout, which must accommodate a human.
+	AttemptTimeout string `yaml:"attempt_timeout"`
+}
+
+// IsEnabled reports whether a failed initial connect is retried, defaulting to
+// true when unset.
+func (r ConnectRetry) IsEnabled() bool { return r.Enabled == nil || *r.Enabled }
+
+// MaxDelayOrDefault returns the parsed backoff ceiling, or the default when
+// unset. Callers should validate the config first.
+func (r ConnectRetry) MaxDelayOrDefault() time.Duration {
+	return parseDurationOr(r.MaxDelay, defaultRetryMaxDelay)
+}
+
+// AttemptTimeoutOrDefault returns the parsed per-attempt bound, or the default
+// when unset. Callers should validate the config first.
+func (r ConnectRetry) AttemptTimeoutOrDefault() time.Duration {
+	return parseDurationOr(r.AttemptTimeout, defaultRetryAttemptTimeout)
+}
+
+// parseDurationOr parses raw, falling back to def when it is empty or does not
+// describe a positive duration (Validate rejects those, so the fallback only
+// guards direct construction).
+func parseDurationOr(raw string, def time.Duration) time.Duration {
+	if raw == "" {
+		return def
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return def
+	}
+	return d
 }
 
 // Listen configures the single MCP endpoint mcpmux exposes to its client.
@@ -279,6 +340,9 @@ func (c *Config) Validate() error {
 	if c.Listen.Transport == TransportHTTP && (len(c.Listen.Path) == 0 || c.Listen.Path[0] != '/') {
 		return fmt.Errorf("listen.path must start with %q, got %q", "/", c.Listen.Path)
 	}
+	if err := c.ConnectRetry.validate(); err != nil {
+		return err
+	}
 	if len(c.Backends) == 0 {
 		return fmt.Errorf("at least one backend is required")
 	}
@@ -314,6 +378,25 @@ func (c *Config) Validate() error {
 		default:
 			return fmt.Errorf("backend %q: transport must be %q or %q, got %q",
 				b.Name, TransportCommand, TransportHTTP, b.Transport)
+		}
+	}
+	return nil
+}
+
+func (r ConnectRetry) validate() error {
+	for _, f := range []struct{ name, raw string }{
+		{"connect_retry.max_delay", r.MaxDelay},
+		{"connect_retry.attempt_timeout", r.AttemptTimeout},
+	} {
+		if f.raw == "" {
+			continue
+		}
+		d, err := time.ParseDuration(f.raw)
+		if err != nil {
+			return fmt.Errorf("invalid %s %q: %w", f.name, f.raw, err)
+		}
+		if d <= 0 {
+			return fmt.Errorf("%s must be positive, got %q", f.name, f.raw)
 		}
 	}
 	return nil

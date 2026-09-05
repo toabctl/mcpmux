@@ -256,3 +256,50 @@ func TestValidateRejectsBadConfigs(t *testing.T) {
 		})
 	}
 }
+
+func TestConnectRetryDefaults(t *testing.T) {
+	var r ConnectRetry
+	if !r.IsEnabled() {
+		t.Error("IsEnabled() = false for an unset config, want true (retry is on by default)")
+	}
+	if got := r.MaxDelayOrDefault(); got != defaultRetryMaxDelay {
+		t.Errorf("MaxDelayOrDefault() = %s, want %s", got, defaultRetryMaxDelay)
+	}
+	if got := r.AttemptTimeoutOrDefault(); got != defaultRetryAttemptTimeout {
+		t.Errorf("AttemptTimeoutOrDefault() = %s, want %s", got, defaultRetryAttemptTimeout)
+	}
+
+	off := false
+	if (ConnectRetry{Enabled: &off}).IsEnabled() {
+		t.Error("IsEnabled() = true with enabled: false")
+	}
+	set := ConnectRetry{MaxDelay: "90s", AttemptTimeout: "5s"}
+	if got := set.MaxDelayOrDefault(); got != 90*time.Second {
+		t.Errorf("MaxDelayOrDefault() = %s, want 90s", got)
+	}
+	if got := set.AttemptTimeoutOrDefault(); got != 5*time.Second {
+		t.Errorf("AttemptTimeoutOrDefault() = %s, want 5s", got)
+	}
+}
+
+func TestConnectRetryValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		retry   ConnectRetry
+		wantErr bool
+	}{
+		{"unset", ConnectRetry{}, false},
+		{"valid", ConnectRetry{MaxDelay: "15m", AttemptTimeout: "2m"}, false},
+		{"unparseable max_delay", ConnectRetry{MaxDelay: "soon"}, true},
+		{"unparseable attempt_timeout", ConnectRetry{AttemptTimeout: "2"}, true},
+		{"zero max_delay", ConnectRetry{MaxDelay: "0s"}, true},
+		{"negative attempt_timeout", ConnectRetry{AttemptTimeout: "-1m"}, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.retry.validate(); (err != nil) != tc.wantErr {
+				t.Errorf("validate() error = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}

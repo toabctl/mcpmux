@@ -47,6 +47,15 @@ type Mux struct {
 	// closing tells supervisors that a session closing during shutdown is
 	// intentional and must not trigger a reconnect.
 	closing atomic.Bool
+	//nolint:containedctx // The Mux's own lifetime needs a cancellation signal
+	// that outlives any single call: closeCtx is cancelled by Close, and each
+	// per-backend goroutine derives its work context from it as well as from
+	// the caller's, so a backend sleeping out a long retry backoff (up to the
+	// configured ceiling) or waiting on an in-flight attempt cannot hold up
+	// shutdown. A bare channel would cover the sleep but not the attempt.
+	closeCtx    context.Context
+	closeCancel context.CancelFunc
+	closeOnce   sync.Once
 }
 
 // NewServer builds an unconnected Mux: the proxy server and its middleware, with
@@ -54,13 +63,48 @@ type Mux struct {
 // ConnectInBackground. This lets a daemon start serving (and signal systemd
 // readiness) before interactive OAuth backends have finished authorizing.
 func NewServer(cfg *config.Config, log *slog.Logger) *Mux {
+	//nolint:gosec // G118: the cancel is retained on the Mux and called by Close.
+	closeCtx, closeCancel := context.WithCancel(context.Background())
 	m := &Mux{
-		log:    log,
-		server: mcp.NewServer(&mcp.Implementation{Name: clientName, Version: clientVersion}, serverOptions(cfg)),
+		log:         log,
+		server:      mcp.NewServer(&mcp.Implementation{Name: clientName, Version: clientVersion}, serverOptions(cfg)),
+		closeCtx:    closeCtx,
+		closeCancel: closeCancel,
 	}
 	// Debug-log every inbound request from the client (no-op unless --log-level debug).
 	m.server.AddReceivingMiddleware(requestLogger(log))
 	return m
+}
+
+// RetryPolicy bounds the loop that brings up a backend which failed its initial
+// connect: MaxDelay caps the exponential backoff between attempts and
+// AttemptTimeout bounds each individual attempt.
+type RetryPolicy struct {
+	MaxDelay       time.Duration
+	AttemptTimeout time.Duration
+}
+
+// ConnectOptions tunes how Connect brings backends up.
+type ConnectOptions struct {
+	// Eager drives an interactive OAuth backend through its browser consent
+	// during connect rather than lazily on its first tool call.
+	Eager bool
+	// Retry, when non-nil, keeps a backend that fails its initial connect and
+	// retries it in the background instead of skipping it for the process's
+	// lifetime. Only non-interactive backends are retried; see connectOne.
+	// A one-shot caller (the list command) leaves this nil.
+	Retry *RetryPolicy
+}
+
+// attemptTimeout returns the per-attempt connect bound, or zero for an
+// unbounded attempt. The bound is tied to retry because it is retry that makes
+// a timed-out attempt recoverable: without it, cutting off a slow-but-working
+// backend would lose it until the next restart.
+func (o ConnectOptions) attemptTimeout() time.Duration {
+	if o.Retry == nil {
+		return 0
+	}
+	return o.Retry.AttemptTimeout
 }
 
 // New connects to every configured backend synchronously, aggregates their tools
@@ -70,11 +114,10 @@ func NewServer(cfg *config.Config, log *slog.Logger) *Mux {
 // Close.
 func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Mux, error) {
 	m := NewServer(cfg, log)
-	m.Connect(ctx, cfg.Backends, cfg.EagerAuth)
-	m.mu.Lock()
-	n := len(m.backends)
-	m.mu.Unlock()
-	if n == 0 {
+	// No retry policy: a one-shot caller must not linger on a backend that is
+	// down. Backends are therefore either registered or skipped here.
+	m.Connect(ctx, cfg.Backends, ConnectOptions{Eager: cfg.EagerAuth})
+	if m.registeredCount() == 0 {
 		m.Close()
 		return nil, fmt.Errorf("no backends could be connected")
 	}
@@ -82,75 +125,197 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Mux, error
 }
 
 // Connect dials the given backends sequentially, registering each one's tools as
-// it succeeds and logging+skipping failures (one bad backend must not take down
-// the proxy). Sequential iteration keeps interactive OAuth consents to one
-// browser window at a time. It returns the number of backends connected. Safe to
-// call after the server has started serving: tool registration notifies
-// connected clients via tools/list_changed.
-func (m *Mux) Connect(ctx context.Context, backends []config.Backend, eager bool) int {
-	connected := 0
-	for _, bc := range backends {
-		n, err := m.connectOne(ctx, bc, eager)
-		if err != nil {
-			m.log.Warn("skipping backend", "backend", bc.Name, "err", err)
-			continue
-		}
-		m.log.Info("registered backend", "backend", bc.Name, "tools", n)
-		connected++
+// it succeeds (one bad backend must not take down the proxy). Sequential
+// iteration keeps interactive OAuth consents to one browser window at a time. A
+// backend that fails is either kept for background retry or skipped, per
+// opts.Retry. It returns the number of backends connected. Safe to call after
+// the server has started serving: tool registration notifies connected clients
+// via tools/list_changed.
+func (m *Mux) Connect(ctx context.Context, backends []config.Backend, opts ConnectOptions) int {
+	if len(backends) == 0 {
+		return 0
 	}
+	connected := 0
+	var pending, skipped []string
+	for _, bc := range backends {
+		n, isPending, err := m.connectOne(ctx, bc, opts)
+		switch {
+		case err == nil:
+			m.log.Info("registered backend", "backend", bc.Name, "tools", n)
+			connected++
+		case isPending:
+			m.log.Warn("backend pending; retrying in the background",
+				"backend", bc.Name, "err", err)
+			pending = append(pending, bc.Name)
+		default:
+			m.log.Warn("skipping backend", "backend", bc.Name, "err", err)
+			skipped = append(skipped, bc.Name)
+		}
+	}
+	m.logSummary(connected, pending, skipped)
 	return connected
+}
+
+// logSummary records one grep-able line per Connect pass. Per-backend warnings
+// scroll past and are easy to miss, so a pass where several backends did not
+// come up is also reported as a single count of what is up, pending and
+// skipped.
+func (m *Mux) logSummary(connected int, pending, skipped []string) {
+	if len(pending) == 0 && len(skipped) == 0 {
+		m.log.Info("backends up", "connected", connected)
+		return
+	}
+	m.log.Warn("backends up with failures",
+		"connected", connected,
+		"pending", len(pending), "pending_backends", strings.Join(pending, ","),
+		"skipped", len(skipped), "skipped_backends", strings.Join(skipped, ","))
 }
 
 // ConnectInBackground connects the given backends in a goroutine so their
 // interactive OAuth consents happen after the proxy is already serving, instead
 // of blocking startup. Close waits for the goroutine to finish. A nil/empty
 // slice is a no-op.
-func (m *Mux) ConnectInBackground(ctx context.Context, backends []config.Backend, eager bool) {
+func (m *Mux) ConnectInBackground(ctx context.Context, backends []config.Backend, opts ConnectOptions) {
 	if len(backends) == 0 {
 		return
 	}
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
-		m.Connect(ctx, backends, eager)
+		m.Connect(ctx, backends, opts)
 	}()
 }
 
-// connectOne dials a single backend and registers its tools on the proxy server,
-// recording it under m.mu. It returns the number of tools registered.
-func (m *Mux) connectOne(ctx context.Context, bc config.Backend, eager bool) (int, error) {
-	b, err := connectBackend(ctx, bc, eager, m.log)
+// connectOne brings a single backend up and records it under m.mu. It returns
+// the number of tools registered; on failure it reports whether the backend was
+// kept for background retry (pending) or skipped for good.
+//
+// Retry is deliberately withheld from a backend that may open a browser: every
+// attempt takes the process-wide auth mutex (serializing all other consents),
+// rebinds the fixed callback port, and could pop a consent window the user
+// never asked for. Such a backend is skipped on failure, as before, and
+// recovered by RetryPendingNow or a restart.
+func (m *Mux) connectOne(ctx context.Context, bc config.Backend, opts ConnectOptions) (tools int, pending bool, err error) {
+	b, err := newBackend(bc, m.log)
 	if err != nil {
+		return 0, false, err
+	}
+
+	n, err := m.bringUp(ctx, b, opts)
+	switch {
+	case err == nil:
+		m.add(b)
+		// Watch the backend and reconnect it if its session dies. ctx is the
+		// long-lived connect context (cancelled only at shutdown), so it bounds
+		// the supervisor's lifetime and any reconnect's transport build.
+		m.svg.Add(1)
+		go m.run(ctx, b, opts, true)
+		return n, false, nil
+	case opts.Retry == nil || b.interactive:
+		return 0, false, err
+	default:
+		// Keep the backend so its retry loop, Catalog and Close all see it; its
+		// session stays nil until an attempt succeeds.
+		m.add(b)
+		m.svg.Add(1)
+		go m.run(ctx, b, opts, false)
+		return 0, true, err
+	}
+}
+
+// bringUp opens a session for b and publishes its tools. Both halves have to
+// succeed for the backend to be usable, so a failure in either is reported the
+// same way and leaves no session behind for the caller to clean up.
+func (m *Mux) bringUp(ctx context.Context, b *backend, opts ConnectOptions) (int, error) {
+	if err := b.open(ctx, opts, m.log); err != nil {
 		return 0, fmt.Errorf("connect failed: %w", err)
 	}
-	b.desc = bc.Description
-
-	n, err := m.register(ctx, b)
+	n, err := m.register(ctx, b, opts)
 	if err != nil {
-		_ = b.current().Close()
+		if s := b.current(); s != nil {
+			_ = s.Close()
+		}
+		b.session.Store(nil)
 		return 0, fmt.Errorf("list tools failed: %w", err)
 	}
-
-	m.mu.Lock()
-	m.backends = append(m.backends, b)
-	m.mu.Unlock()
-
-	// Watch the backend and reconnect it if its session dies. ctx is the
-	// long-lived connect context (cancelled only at shutdown), so it bounds the
-	// supervisor's lifetime and any reconnect's transport build.
-	m.svg.Add(1)
-	go m.supervise(ctx, b)
 	return n, nil
 }
 
+// add records a backend so Catalog, Close and RetryPendingNow can see it. A
+// backend is added whether or not it has connected yet.
+func (m *Mux) add(b *backend) {
+	m.mu.Lock()
+	m.backends = append(m.backends, b)
+	m.mu.Unlock()
+}
+
+// registeredCount reports how many backends have published their tools, as
+// opposed to merely being tracked while their retry loop works on them.
+func (m *Mux) registeredCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, b := range m.backends {
+		if b.registered {
+			n++
+		}
+	}
+	return n
+}
+
+// RetryPendingNow asks every backend still waiting on its first successful
+// connect to attempt again immediately instead of waiting out its backoff, and
+// returns how many were kicked. It is the daemon's recovery hook (see the
+// SIGUSR1 handler): after refreshing whatever credential the backends need, one
+// signal brings them up without the restart that would re-trigger every
+// interactive OAuth consent. Sends are non-blocking, so a kick that arrives
+// mid-attempt is coalesced into the next iteration.
+func (m *Mux) RetryPendingNow() int {
+	m.mu.Lock()
+	kicked := 0
+	for _, b := range m.backends {
+		if b.registered {
+			continue
+		}
+		select {
+		case b.kick <- struct{}{}:
+			kicked++
+		default:
+		}
+	}
+	m.mu.Unlock()
+	m.log.Info("kicked pending backends", "backends", kicked)
+	return kicked
+}
+
 // register pulls a backend's tool catalog and exposes each tool on the proxy
-// server under "<backend>__<tool>", forwarding invocations to the backend.
-func (m *Mux) register(ctx context.Context, b *backend) (int, error) {
-	res, err := b.current().ListTools(ctx, nil)
+// server under "<backend>__<tool>", forwarding invocations to the backend. It is
+// idempotent: a backend brought up by its retry loop must not publish its
+// catalog twice, which would duplicate Catalog rows and re-notify clients.
+func (m *Mux) register(ctx context.Context, b *backend, opts ConnectOptions) (int, error) {
+	m.mu.Lock()
+	registered, known := b.registered, len(b.tools)
+	m.mu.Unlock()
+	if registered {
+		return known, nil
+	}
+
+	// Bound the round-trip for the same reason connect is bounded: a peer that
+	// answers initialize and then stalls must not wedge the retry loop.
+	listCtx := ctx
+	if d := opts.attemptTimeout(); d > 0 {
+		var cancel context.CancelFunc
+		listCtx, cancel = context.WithTimeout(ctx, d)
+		defer cancel()
+	}
+	res, err := b.current().ListTools(listCtx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("list tools for backend %q: %w", b.name, err)
 	}
 
+	// Collect into a local slice and publish it under m.mu at the end: Catalog
+	// may read a late-registering backend's tools concurrently.
+	var tools []ToolInfo
 	for _, tool := range res.Tools {
 		// Copy the tool verbatim and only re-namespace its name; the input
 		// schema, description, etc. are forwarded to the client unchanged.
@@ -180,7 +345,7 @@ func (m *Mux) register(ctx context.Context, b *backend) (int, error) {
 		})
 		// Record the aggregated tool so Catalog can report it without a second
 		// round-trip to the backend.
-		b.tools = append(b.tools, ToolInfo{
+		tools = append(tools, ToolInfo{
 			Backend:     b.name,
 			Name:        proxied.Name,
 			Description: tool.Description,
@@ -191,6 +356,10 @@ func (m *Mux) register(ctx context.Context, b *backend) (int, error) {
 			"tool", origName,
 			"description", tool.Description)
 	}
+
+	m.mu.Lock()
+	b.tools, b.registered = tools, true
+	m.mu.Unlock()
 	return len(res.Tools), nil
 }
 
@@ -317,13 +486,16 @@ func (m *Mux) ServeHTTPListener(ctx context.Context, ln net.Listener, path strin
 
 // Close shuts down every backend session. It first marks the Mux as closing (so
 // supervisors treat the impending session closures as intentional and do not
-// reconnect) and waits for any in-flight background Connect to return (the
+// reconnect), cancels the per-backend goroutines directly — otherwise one
+// sleeping out a retry backoff would stall shutdown for as long as its current
+// delay — and waits for any in-flight background Connect to return (the
 // caller is expected to have cancelled the context, which aborts an in-progress
 // connect/consent) so closing sessions cannot race the goroutine that registers
 // them. Closing each session unblocks its supervisor's Wait; once all sessions
 // are closed it waits for the supervisors to exit.
 func (m *Mux) Close() {
 	m.closing.Store(true)
+	m.closeOnce.Do(m.closeCancel)
 	m.wg.Wait()
 	m.mu.Lock()
 	for _, b := range m.backends {

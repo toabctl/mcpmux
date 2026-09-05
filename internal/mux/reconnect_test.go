@@ -20,7 +20,7 @@ func TestSupervisorReconnectsDeadSession(t *testing.T) {
 	m := NewServer(&config.Config{}, testLogger())
 	defer m.Close()
 
-	if n := m.Connect(testCtx(t), []config.Backend{helperBackend("rc")}, false); n != 1 {
+	if n := m.Connect(testCtx(t), []config.Backend{helperBackend("rc")}, ConnectOptions{}); n != 1 {
 		t.Fatalf("Connect connected %d backends, want 1", n)
 	}
 
@@ -57,7 +57,7 @@ func TestSupervisorReconnectsDeadSession(t *testing.T) {
 // Close returns promptly.
 func TestCloseStopsSupervisorWithoutReconnect(t *testing.T) {
 	m := NewServer(&config.Config{}, testLogger())
-	if n := m.Connect(testCtx(t), []config.Backend{helperBackend("cl")}, false); n != 1 {
+	if n := m.Connect(testCtx(t), []config.Backend{helperBackend("cl")}, ConnectOptions{}); n != 1 {
 		t.Fatalf("Connect connected %d backends, want 1", n)
 	}
 
