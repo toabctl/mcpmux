@@ -20,6 +20,12 @@ import (
 // below spawn a real backend by re-executing the test binary.
 const helperServerEnv = "MCPMUX_HELPER_MCP_SERVER"
 
+// helperReadyFileEnv names a file the helper process requires before it will
+// serve. It models a backend that is unavailable at startup — a credential
+// helper with an expired token, an upstream that is still booting — and becomes
+// available later, without the test needing a shell or a network service.
+const helperReadyFileEnv = "MCPMUX_HELPER_READY_FILE"
+
 // helperBackend returns a command-transport backend config that runs the test
 // binary as a minimal MCP server exposing a single "ping" tool.
 func helperBackend(name string) config.Backend {
@@ -31,6 +37,15 @@ func helperBackend(name string) config.Backend {
 	}
 }
 
+// gatedHelperBackend is helperBackend with a gate: the spawned process exits
+// non-zero until ready exists, so the backend fails to connect and then starts
+// working once the test creates the file.
+func gatedHelperBackend(name, ready string) config.Backend {
+	b := helperBackend(name)
+	b.Env[helperReadyFileEnv] = ready
+	return b
+}
+
 // TestHelperMCPServerProcess is not a real test: when re-executed with
 // helperServerEnv set (see helperBackend) it serves a one-tool MCP server over
 // stdio until its stdin is closed, then exits. Under a normal test run the env
@@ -38,6 +53,13 @@ func helperBackend(name string) config.Backend {
 func TestHelperMCPServerProcess(t *testing.T) {
 	if os.Getenv(helperServerEnv) != "1" {
 		t.Skip("only runs as a spawned MCP server subprocess (see helperBackend)")
+	}
+	// Exit before serving when gated on a file that does not exist yet, so the
+	// parent sees a failed connect rather than a working backend.
+	if f := os.Getenv(helperReadyFileEnv); f != "" {
+		if _, err := os.Stat(f); err != nil {
+			os.Exit(1)
+		}
 	}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "helper", Version: "test"}, nil)
 	srv.AddTool(
@@ -85,7 +107,7 @@ func TestConnectRegistersBackendTools(t *testing.T) {
 	m := NewServer(&config.Config{}, testLogger())
 	defer m.Close()
 
-	if n := m.Connect(testCtx(t), []config.Backend{helperBackend("hb")}, false); n != 1 {
+	if n := m.Connect(testCtx(t), []config.Backend{helperBackend("hb")}, ConnectOptions{}); n != 1 {
 		t.Fatalf("Connect connected %d backends, want 1", n)
 	}
 
@@ -108,7 +130,7 @@ func TestConnectInBackgroundAndClose(t *testing.T) {
 	defer cancel()
 
 	m := NewServer(&config.Config{}, testLogger())
-	m.ConnectInBackground(ctx, []config.Backend{helperBackend("bg")}, false)
+	m.ConnectInBackground(ctx, []config.Backend{helperBackend("bg")}, ConnectOptions{})
 
 	// Poll Catalog (a concurrent reader) until the background backend registers,
 	// bounded so a regression fails fast instead of hanging.

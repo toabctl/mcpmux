@@ -43,16 +43,31 @@ func newServeCmd() *cobra.Command {
 			m := mux.NewServer(cfg, log)
 			defer m.Close()
 
+			// A daemon retries a backend that fails its initial connect: the
+			// credential it needed may be minutes from being refreshed, and
+			// without retry the backend would be lost until the next restart.
+			opts := mux.ConnectOptions{Eager: cfg.EagerAuth}
+			if cfg.ConnectRetry.IsEnabled() {
+				opts.Retry = &mux.RetryPolicy{
+					MaxDelay:       cfg.ConnectRetry.MaxDelayOrDefault(),
+					AttemptTimeout: cfg.ConnectRetry.AttemptTimeoutOrDefault(),
+				}
+			}
+			// SIGUSR1 brings pending backends up on demand, so recovering from
+			// an expired credential does not need a restart (which would
+			// re-trigger every interactive OAuth consent).
+			retryOnSignal(ctx, m, log)
+
 			// Connect non-interactive backends now so their tools are ready
 			// immediately. Interactive OAuth backends (which open a browser) are
 			// deferred to the background so their consents block neither serving
 			// nor the systemd readiness signal — they register their tools via
 			// tools/list_changed as each consent completes.
 			syncBackends, oauthBackends := mux.PartitionBackends(cfg.Backends)
-			m.Connect(ctx, syncBackends, cfg.EagerAuth)
+			m.Connect(ctx, syncBackends, opts)
 
 			if cfg.Listen.Transport != config.TransportHTTP {
-				m.ConnectInBackground(ctx, oauthBackends, cfg.EagerAuth)
+				m.ConnectInBackground(ctx, oauthBackends, opts)
 				return m.ServeStdio(ctx)
 			}
 
@@ -60,7 +75,7 @@ func newServeCmd() *cobra.Command {
 			// (no-op when not socket-activated / NOTIFY_SOCKET unset), then bring
 			// up the interactive OAuth backends in the background.
 			_, _ = daemon.SdNotify(false, daemon.SdNotifyReady)
-			m.ConnectInBackground(ctx, oauthBackends, cfg.EagerAuth)
+			m.ConnectInBackground(ctx, oauthBackends, opts)
 
 			// Prefer a socket passed by systemd (socket activation) over binding
 			// the configured address ourselves.

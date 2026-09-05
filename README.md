@@ -25,7 +25,8 @@ flowchart LR
 
 One inbound MCP server fans out to one client session per backend. Tool names get
 a `<backend>__` prefix to avoid collisions; calls are forwarded verbatim to the
-owning backend. A backend that fails to connect is skipped (not fatal), and logs
+owning backend. A backend that fails to connect never takes down the proxy: it is
+retried in the background and registers its tools whenever it comes up, and logs
 go to stderr so stdout stays clean for the stdio transport.
 
 ## Features
@@ -41,6 +42,12 @@ go to stderr so stdout stays clean for the stdio transport.
   - `oauth` — interactive authorization-code + PKCE with dynamic client
     registration (RFC 7591); a browser opens once at startup, tokens refresh in
     memory. Options: `scopes`, `client_name`, `open_browser`, `callback_port`.
+- **Self-healing connects** — a backend that fails at startup (an expired
+  credential, an upstream still booting) is retried with jittered, capped
+  backoff and registers its tools whenever it comes up; `SIGUSR1` retries every
+  pending backend at once, so refreshing a credential needs no restart and no
+  repeat of the interactive OAuth consents. Tunable under `connect_retry`.
+  A dropped session is likewise reconnected, keeping the same tool catalog.
 - **systemd socket activation** — the socket survives service restarts, so clients
   never hit "connection refused"; the service can run always-on or start on demand.
 - **Not yet:** persisting OAuth tokens across restarts, aggregating resources or
