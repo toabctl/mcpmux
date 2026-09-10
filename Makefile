@@ -8,8 +8,21 @@ UNITDIR ?= $(HOME)/.config/systemd/user
 .DEFAULT_GOAL := all
 .PHONY: all build test vet tidy run install restart uninstall clean
 
-# Default: rebuild, install, and restart the running service to pick up changes.
-all: install restart
+# True when every file `install` would copy already matches what is installed.
+# Go builds are reproducible, so an unchanged tree rebuilds byte-identically.
+INSTALLED_UP_TO_DATE = cmp -s $(BINARY) $(PREFIX)/bin/$(BINARY) && \
+	cmp -s dist/mcpmux.service $(UNITDIR)/mcpmux.service && \
+	cmp -s dist/mcpmux.socket $(UNITDIR)/mcpmux.socket
+
+# Default: rebuild, then install and restart only if that changed anything (or
+# the service is down). A restart costs every interactive OAuth consent, so an
+# automated rebuild — e.g. a nightly one — must not trigger it for nothing.
+all: build
+	@if $(INSTALLED_UP_TO_DATE) && systemctl --user is-active --quiet mcpmux.service; then \
+		echo "$(BINARY) $(VERSION): unchanged and running; not restarting (use 'make restart' to force)"; \
+	else \
+		$(MAKE) --no-print-directory install restart; \
+	fi
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY) .

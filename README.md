@@ -94,6 +94,10 @@ systemctl --user enable --now mcpmux.socket mcpmux.service
 See the comments in `dist/mcpmux.service` and `dist/mcpmux.socket` for the
 always-on vs on-demand modes and the OAuth-at-startup setup.
 
+Afterwards, `make` (i.e. `make all`) rebuilds, installs and restarts the
+service — but only if the rebuild changed anything, so an automated rebuild of
+unchanged sources costs no OAuth consents. `make restart` forces it.
+
 ## License
 
 [Apache-2.0](LICENSE) © Thomas Bechtold
