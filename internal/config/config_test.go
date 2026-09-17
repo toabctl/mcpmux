@@ -303,3 +303,18 @@ func TestConnectRetryValidate(t *testing.T) {
 		})
 	}
 }
+
+// TestTokenStoreIsEnabled verifies persistence is on unless explicitly
+// disabled, so an existing config gets it without being edited.
+func TestTokenStoreIsEnabled(t *testing.T) {
+	if !(TokenStore{}).IsEnabled() {
+		t.Error("unset token_store should default to enabled")
+	}
+	on, off := true, false
+	if !(TokenStore{Enabled: &on}).IsEnabled() {
+		t.Error("enabled: true should be enabled")
+	}
+	if (TokenStore{Enabled: &off}).IsEnabled() {
+		t.Error("enabled: false should be disabled")
+	}
+}

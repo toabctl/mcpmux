@@ -50,9 +50,14 @@ go to stderr so stdout stays clean for the stdio transport.
   A dropped session is likewise reconnected, keeping the same tool catalog.
 - **systemd socket activation** — the socket survives service restarts, so clients
   never hit "connection refused"; the service can run always-on or start on demand.
-- **Not yet:** persisting OAuth tokens across restarts, aggregating resources or
-  prompts (tools only), and authenticating the client→mcpmux hop (run it on
-  localhost or behind your own auth proxy).
+- **Restart without re-consenting** — interactive OAuth tokens are kept in a
+  0600 file under `$XDG_RUNTIME_DIR`, a tmpfs, so a restart (a rebuild, a
+  `systemctl restart`) reuses them instead of reopening every browser consent.
+  They never reach persistent storage and are gone after logout or reboot,
+  which re-consents once. Disable with `token_store.enabled: false`.
+- **Not yet:** aggregating resources or prompts (tools only), and
+  authenticating the client→mcpmux hop (run it on localhost or behind your own
+  auth proxy).
 
 ## Usage
 

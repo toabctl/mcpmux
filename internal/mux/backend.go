@@ -64,8 +64,8 @@ func (b *backend) current() *mcp.ClientSession { return b.session.Load() }
 // A failure here is permanent and configuration-shaped (an unsupported
 // transport, an unreadable client-id helper), so the caller skips the backend
 // rather than retrying it.
-func newBackend(bc config.Backend, log *slog.Logger) (*backend, error) {
-	d, err := newDialer(bc, log)
+func newBackend(bc config.Backend, log *slog.Logger, store auth.Store) (*backend, error) {
+	d, err := newDialer(bc, log, store)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +155,7 @@ func (b *backend) open(ctx context.Context, opts ConnectOptions, log *slog.Logge
 // transportFor builds the client transport for a backend from its config. ctx
 // bounds the lifetime of any credential-helper invocations or OAuth callback
 // servers the transport owns.
-func transportFor(ctx context.Context, b config.Backend, log *slog.Logger) (mcp.Transport, error) {
+func transportFor(ctx context.Context, b config.Backend, log *slog.Logger, store auth.Store) (mcp.Transport, error) {
 	switch b.Transport {
 	case config.TransportCommand:
 		//nolint:gosec // G204: the backend command is operator-supplied config, not external input.
@@ -198,6 +198,7 @@ func transportFor(ctx context.Context, b config.Backend, log *slog.Logger) (mcp.
 				ClientID:            clientID,
 				ClientSecret:        clientSecret,
 				AllowIssuerMismatch: b.Auth.AllowIssuerMismatch,
+				Store:               store,
 			})
 			if err != nil {
 				return nil, err
