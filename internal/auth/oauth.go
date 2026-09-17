@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -321,25 +322,64 @@ func (a *browserAuthorizer) await(ctx context.Context, args *sdkauth.Authorizati
 
 // openBrowser launches the system browser for url without blocking.
 func openBrowser(url string) error {
-	var name string
-	var args []string
 	switch runtime.GOOS {
 	case "darwin":
-		name, args = "open", []string{url}
+		return launch("open", []string{url}, nil)
 	case "windows":
-		name, args = "rundll32", []string{"url.dll,FileProtocolHandler", url}
-	default:
-		if b := os.Getenv("BROWSER"); b != "" {
-			name = b
-		} else {
-			name = "xdg-open"
-		}
-		args = []string{url}
+		return launch("rundll32", []string{"url.dll,FileProtocolHandler", url}, nil)
 	}
+	name := "xdg-open"
+	if b := os.Getenv("BROWSER"); b != "" {
+		name = b
+	}
+	args := []string{url}
+	if run, runArgs, ok := detachScope(name, args); ok {
+		// The wrapper can fail where the bare opener works, and a browser that
+		// never opens stalls the consent, so retry directly if it dies at once.
+		return launch(run, runArgs, func() { _ = launch(name, args, nil) })
+	}
+	return launch(name, args, nil)
+}
+
+// launch starts argv without blocking and reaps it. onFail, if set, runs when
+// the process fails within a couple of seconds, i.e. it never got as far as
+// handing the URL over.
+func launch(name string, args []string, onFail func()) error {
 	// G204: opens a fixed browser launcher (or $BROWSER) with a URL we built.
 	// noctx: fire-and-forget; the browser must outlive the request context.
 	//nolint:gosec,noctx
-	return exec.Command(name, args...).Start()
+	cmd := exec.Command(name, args...)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	began := time.Now()
+	go func() {
+		if err := cmd.Wait(); err != nil && onFail != nil && time.Since(began) < 2*time.Second {
+			onFail()
+		}
+	}()
+	return nil
+}
+
+// detachScope wraps an opener in a transient systemd --user scope, so the
+// browser it spawns leaves our service cgroup -- systemd kills that cgroup
+// wholesale on restart, browser included.
+func detachScope(name string, args []string) (string, []string, bool) {
+	// systemd-run --user talks to the user manager over this socket.
+	rt := os.Getenv("XDG_RUNTIME_DIR")
+	if rt == "" {
+		return "", nil, false
+	}
+	// G703: the path is only stat'ed, to decide whether a user manager exists.
+	//nolint:gosec
+	if _, err := os.Stat(filepath.Join(rt, "systemd", "private")); err != nil {
+		return "", nil, false
+	}
+	run, err := exec.LookPath("systemd-run")
+	if err != nil {
+		return "", nil, false
+	}
+	return run, append([]string{"--user", "--scope", "--collect", "--quiet", "--", name}, args...), true
 }
 
 const callbackPage = `<!doctype html><html><head><meta charset="utf-8">

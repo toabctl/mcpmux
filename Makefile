@@ -24,8 +24,10 @@ all: build
 		$(MAKE) --no-print-directory install restart; \
 	fi
 
+# -trimpath keeps the binary independent of the toolchain's location, so a `go`
+# snap refresh alone no longer changes the bytes and defeats the skip above.
 build:
-	go build -ldflags "$(LDFLAGS)" -o $(BINARY) .
+	go build -trimpath -ldflags "$(LDFLAGS)" -o $(BINARY) .
 
 test:
 	go test ./...
