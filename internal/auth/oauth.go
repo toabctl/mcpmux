@@ -20,6 +20,7 @@ import (
 
 	sdkauth "github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
+	"golang.org/x/oauth2"
 )
 
 // OAuthOptions configures the interactive (authorization-code + PKCE) OAuth
@@ -47,6 +48,9 @@ type OAuthOptions struct {
 	// declares an issuer different from the URL it is served from (RFC 8414
 	// §3.3 violation), by normalizing the issuer client-side. Needed for Slack.
 	AllowIssuerMismatch bool
+	// Store, when non-nil, persists the token so a restart reuses it instead
+	// of opening another browser consent.
+	Store Store
 }
 
 // NewOAuthHandler builds an OAuthHandler that performs the authorization-code
@@ -83,11 +87,68 @@ func NewOAuthHandler(ctx context.Context, log *slog.Logger, o OAuthOptions) (sdk
 	} else {
 		cfg.DynamicClientRegistrationConfig = &sdkauth.DynamicClientRegistrationConfig{Metadata: clientMetadata(o, ba.redirect)}
 	}
+	// A refresh token is what makes a stored credential outlive the access
+	// token's hour; the SDK only asks for offline_access when the server
+	// advertises it, and clientMetadata already declares the grant.
+	cfg.RequestRefreshToken = true
+	if o.Store != nil {
+		bindStore(cfg, o.Store, o.Label, log)
+	}
 	h, err := sdkauth.NewAuthorizationCodeHandler(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("build oauth handler for %q: %w", o.Label, err)
 	}
 	return h, nil
+}
+
+// bindStore wires a token store into the handler config: every newly issued
+// token is saved, and a usable stored one is injected as the initial token
+// source, which is what stops the SDK from running a browser consent.
+//
+// A stored credential that the server no longer honours is not a dead end: the
+// transport drops the header on invalid_grant and the resulting 401 runs the
+// normal consent, and EagerAuthorize likewise falls through to it when the
+// restored token fails to refresh. Either way the fresh token overwrites this
+// one.
+func bindStore(cfg *sdkauth.AuthorizationCodeHandlerConfig, st Store, label string, log *slog.Logger) {
+	save := func(oc *oauth2.Config, tok *oauth2.Token) {
+		if err := st.Save(label, credentialFrom(oc, tok)); err != nil {
+			log.Warn("could not persist oauth token", "backend", label, "err", err)
+		}
+	}
+	cfg.NewTokenSource = func(ctx context.Context, oc *oauth2.Config, tok *oauth2.Token) (oauth2.TokenSource, error) {
+		save(oc, tok)
+		return &persistSource{
+			inner: oc.TokenSource(ctx, tok),
+			save:  func(t *oauth2.Token) { save(oc, t) },
+		}, nil
+	}
+
+	cred, err := st.Load(label)
+	if err != nil {
+		log.Warn("could not read stored oauth token", "backend", label, "err", err)
+		return
+	}
+	if cred == nil {
+		return
+	}
+	// Without a refresh token an expired access token is unusable, and a
+	// consent is the only way forward.
+	if cred.RefreshToken == "" && !cred.Expiry.IsZero() && !cred.Expiry.After(time.Now()) {
+		return
+	}
+	oc := cred.oauth2Config()
+	// The oauth2 library reuses this context for every later refresh, so it
+	// must outlive the call that builds the source (see go-sdk #988).
+	ctx := context.Background()
+	if cfg.Client != nil {
+		ctx = context.WithValue(ctx, oauth2.HTTPClient, cfg.Client)
+	}
+	cfg.InitialTokenSource = &persistSource{
+		inner: oc.TokenSource(ctx, cred.token()),
+		save:  func(t *oauth2.Token) { save(oc, t) },
+	}
+	log.Info("reusing stored oauth token; no browser consent needed", "backend", label)
 }
 
 // EagerAuthorize forces an interactive OAuth handler to run its

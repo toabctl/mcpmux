@@ -26,7 +26,7 @@ func TestNewDialer_Capabilities(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			d, err := newDialer(tc.backend, testLogger())
+			d, err := newDialer(tc.backend, testLogger(), nil)
 			if err != nil {
 				t.Fatalf("newDialer: %v", err)
 			}
@@ -42,7 +42,7 @@ func TestNewDialer_Capabilities(t *testing.T) {
 }
 
 func TestNewDialer_UnsupportedTransport(t *testing.T) {
-	if _, err := newDialer(config.Backend{Name: "x", Transport: "bogus"}, testLogger()); err == nil {
+	if _, err := newDialer(config.Backend{Name: "x", Transport: "bogus"}, testLogger(), nil); err == nil {
 		t.Error("expected an error for an unsupported transport")
 	}
 }
@@ -52,7 +52,7 @@ func TestNewDialer_UnsupportedTransport(t *testing.T) {
 // OAuthHandler (and its in-memory token) is preserved across reconnects.
 func TestHTTPDialer_ReusesTransport(t *testing.T) {
 	b := config.Backend{Name: "h", Transport: config.TransportHTTP, Endpoint: "https://x.test/mcp", Auth: config.Auth{Type: config.AuthBearer, Token: "t"}}
-	d, err := newDialer(b, testLogger())
+	d, err := newDialer(b, testLogger(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestHTTPDialer_ReusesTransport(t *testing.T) {
 // and a reconnect must re-spawn it.
 func TestCommandDialer_RebuildsTransport(t *testing.T) {
 	b := config.Backend{Name: "c", Transport: config.TransportCommand, Command: []string{"true"}}
-	d, err := newDialer(b, testLogger())
+	d, err := newDialer(b, testLogger(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

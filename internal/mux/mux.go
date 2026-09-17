@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/toabctl/mcpmux/internal/auth"
 	"github.com/toabctl/mcpmux/internal/config"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -94,6 +95,24 @@ type ConnectOptions struct {
 	// lifetime. Only non-interactive backends are retried; see connectOne.
 	// A one-shot caller (the list command) leaves this nil.
 	Retry *RetryPolicy
+	// Store, when non-nil, lets interactive OAuth backends reuse a token from
+	// a previous run instead of opening a browser consent. One instance is
+	// shared by every backend, so concurrent refreshes serialize on it.
+	Store auth.Store
+}
+
+// NewTokenStore returns the OAuth token store for cfg, or nil when
+// persistence is disabled or there is no tmpfs to keep the tokens off disk.
+func NewTokenStore(cfg *config.Config, log *slog.Logger) auth.Store {
+	if !cfg.TokenStore.IsEnabled() {
+		return nil
+	}
+	st, err := auth.NewRuntimeStore()
+	if err != nil {
+		log.Warn("oauth tokens will not survive a restart", "err", err)
+		return nil
+	}
+	return st
 }
 
 // attemptTimeout returns the per-attempt connect bound, or zero for an
@@ -116,7 +135,7 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Mux, error
 	m := NewServer(cfg, log)
 	// No retry policy: a one-shot caller must not linger on a backend that is
 	// down. Backends are therefore either registered or skipped here.
-	m.Connect(ctx, cfg.Backends, ConnectOptions{Eager: cfg.EagerAuth})
+	m.Connect(ctx, cfg.Backends, ConnectOptions{Eager: cfg.EagerAuth, Store: NewTokenStore(cfg, log)})
 	if m.registeredCount() == 0 {
 		m.Close()
 		return nil, fmt.Errorf("no backends could be connected")
@@ -196,7 +215,7 @@ func (m *Mux) ConnectInBackground(ctx context.Context, backends []config.Backend
 // never asked for. Such a backend is skipped on failure, as before, and
 // recovered by RetryPendingNow or a restart.
 func (m *Mux) connectOne(ctx context.Context, bc config.Backend, opts ConnectOptions) (tools int, pending bool, err error) {
-	b, err := newBackend(bc, m.log)
+	b, err := newBackend(bc, m.log, opts.Store)
 	if err != nil {
 		return 0, false, err
 	}

@@ -30,6 +30,13 @@ connect_retry:
   # Bound on a single connect attempt, so a peer that accepts the connection
   # and then never answers initialize cannot wedge startup or the retry loop.
   attempt_timeout: 2m
+
+# Whether interactive OAuth tokens outlive a restart. They are kept in a 0600
+# file under $XDG_RUNTIME_DIR (tmpfs), so they never reach persistent storage
+# and are gone after logout or reboot.
+token_store:
+  # Set to false to hold tokens in memory only, re-consenting on every restart.
+  enabled: true
 # Send SIGUSR1 to retry every still-pending backend immediately — the recovery
 # path after refreshing an expired credential, with no restart (and so no
 # repeat of the interactive OAuth consents):

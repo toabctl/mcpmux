@@ -46,7 +46,7 @@ func newServeCmd() *cobra.Command {
 			// A daemon retries a backend that fails its initial connect: the
 			// credential it needed may be minutes from being refreshed, and
 			// without retry the backend would be lost until the next restart.
-			opts := mux.ConnectOptions{Eager: cfg.EagerAuth}
+			opts := mux.ConnectOptions{Eager: cfg.EagerAuth, Store: mux.NewTokenStore(cfg, log)}
 			if cfg.ConnectRetry.IsEnabled() {
 				opts.Retry = &mux.RetryPolicy{
 					MaxDelay:       cfg.ConnectRetry.MaxDelayOrDefault(),

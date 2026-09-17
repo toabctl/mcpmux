@@ -77,6 +77,25 @@ type Config struct {
 	EagerAuth bool `yaml:"eager_auth"`
 	// ConnectRetry governs backends that fail their initial connect.
 	ConnectRetry ConnectRetry `yaml:"connect_retry"`
+	// TokenStore governs whether interactive OAuth tokens outlive a restart.
+	TokenStore TokenStore `yaml:"token_store"`
+}
+
+// TokenStore configures persistence of interactive OAuth tokens. Without it
+// every restart -- including an automated rebuild's -- re-triggers each
+// backend's browser consent, and consents nobody completes within the timeout
+// cost that backend until the next restart.
+type TokenStore struct {
+	// Enabled defaults to true. Tokens are kept in a 0600 file under
+	// $XDG_RUNTIME_DIR, which is a tmpfs: they survive a restart but never
+	// reach persistent storage, and are gone after logout or reboot.
+	Enabled *bool `yaml:"enabled"`
+}
+
+// IsEnabled reports whether OAuth tokens should be persisted, defaulting to
+// true when unset.
+func (t TokenStore) IsEnabled() bool {
+	return t.Enabled == nil || *t.Enabled
 }
 
 // ConnectRetry configures how mcpmux treats a backend that fails its initial

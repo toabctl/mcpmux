@@ -37,7 +37,7 @@ func TestTransportFor_CommandPassesArgvAndEnv(t *testing.T) {
 		Command:   []string{"echo", "hi"},
 		Env:       map[string]string{"MCPMUX_TEST_VAR": "value123"},
 	}
-	tr, err := transportFor(testCtx(t), b, testLogger())
+	tr, err := transportFor(testCtx(t), b, testLogger(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestTransportFor_HTTPAuthHeaders(t *testing.T) {
 			defer srv.Close()
 
 			b := config.Backend{Name: "x", Transport: config.TransportHTTP, Endpoint: srv.URL, Auth: tc.auth}
-			tr, err := transportFor(testCtx(t), b, testLogger())
+			tr, err := transportFor(testCtx(t), b, testLogger(), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -120,7 +120,7 @@ func TestTransportFor_HTTPSetsOAuthHandler(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			b := config.Backend{Name: "x", Transport: config.TransportHTTP, Endpoint: "https://example.test/mcp", Auth: tc.auth}
-			tr, err := transportFor(testCtx(t), b, testLogger())
+			tr, err := transportFor(testCtx(t), b, testLogger(), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -184,7 +184,7 @@ func TestResolveValue(t *testing.T) {
 
 func TestTransportFor_UnsupportedTransport(t *testing.T) {
 	b := config.Backend{Name: "x", Transport: "bogus"}
-	if _, err := transportFor(testCtx(t), b, testLogger()); err == nil {
+	if _, err := transportFor(testCtx(t), b, testLogger(), nil); err == nil {
 		t.Error("expected an error for an unsupported transport")
 	}
 }

@@ -45,12 +45,12 @@ type eagerAuthorizer interface {
 // server or credential-helper invocation) is constructed lazily in dial, so
 // newDialer is safe to call merely to inspect a backend's capabilities (see
 // isInteractive).
-func newDialer(b config.Backend, log *slog.Logger) (dialer, error) {
+func newDialer(b config.Backend, log *slog.Logger, store auth.Store) (dialer, error) {
 	switch b.Transport {
 	case config.TransportCommand:
 		return &commandDialer{b: b, log: log}, nil
 	case config.TransportHTTP:
-		h := &httpDialer{b: b, log: log}
+		h := &httpDialer{b: b, log: log, store: store}
 		if b.Auth.Type == config.AuthOAuth {
 			return &oauthDialer{httpDialer: h}, nil
 		}
@@ -69,7 +69,7 @@ type commandDialer struct {
 }
 
 func (d *commandDialer) dial(ctx context.Context) (mcp.Transport, error) {
-	return transportFor(ctx, d.b, d.log)
+	return transportFor(ctx, d.b, d.log, nil)
 }
 
 // httpDialer reaches a backend over streamable HTTP with static or
@@ -77,8 +77,9 @@ func (d *commandDialer) dial(ctx context.Context) (mcp.Transport, error) {
 // the same instance on every dial means a reconnect reuses the established
 // credential plumbing rather than rebuilding it.
 type httpDialer struct {
-	b   config.Backend
-	log *slog.Logger
+	b     config.Backend
+	log   *slog.Logger
+	store auth.Store
 
 	mu sync.Mutex
 	tr *mcp.StreamableClientTransport
@@ -88,7 +89,7 @@ func (d *httpDialer) dial(ctx context.Context) (mcp.Transport, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.tr == nil {
-		tr, err := transportFor(ctx, d.b, d.log)
+		tr, err := transportFor(ctx, d.b, d.log, d.store)
 		if err != nil {
 			return nil, err
 		}
@@ -123,7 +124,7 @@ func (d *oauthDialer) eagerAuthorize(ctx context.Context) error {
 // authorize. Everything else (command transports, static or helper-command
 // credentials) connects without human interaction.
 func isInteractive(b config.Backend) bool {
-	d, err := newDialer(b, nil)
+	d, err := newDialer(b, nil, nil)
 	if err != nil {
 		return false
 	}
