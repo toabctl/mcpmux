@@ -11,6 +11,10 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -243,5 +247,42 @@ func TestClientMetadata(t *testing.T) {
 	}
 	if custom.Scope != "" {
 		t.Errorf("empty scopes should yield empty Scope, got %q", custom.Scope)
+	}
+}
+
+// TestDetachScope verifies the opener is wrapped in a transient systemd scope
+// only when a user manager is actually reachable.
+func TestDetachScope(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	if _, _, ok := detachScope("xdg-open", []string{"http://x"}); ok {
+		t.Error("want no wrapper without XDG_RUNTIME_DIR")
+	}
+
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	if _, _, ok := detachScope("xdg-open", []string{"http://x"}); ok {
+		t.Error("want no wrapper without a systemd private socket")
+	}
+
+	rt := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(rt, "systemd"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rt, "systemd", "private"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", rt)
+	if _, err := exec.LookPath("systemd-run"); err != nil {
+		t.Skip("systemd-run not installed")
+	}
+	run, args, ok := detachScope("xdg-open", []string{"http://x"})
+	if !ok {
+		t.Fatal("want a wrapper when systemd-run and the socket are present")
+	}
+	if filepath.Base(run) != "systemd-run" {
+		t.Errorf("run = %q, want systemd-run", run)
+	}
+	want := []string{"--user", "--scope", "--collect", "--quiet", "--", "xdg-open", "http://x"}
+	if !slices.Equal(args, want) {
+		t.Errorf("args = %v, want %v", args, want)
 	}
 }

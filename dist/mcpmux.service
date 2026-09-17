@@ -75,7 +75,9 @@ TimeoutStartSec=660
 # Interactive OAuth backends (auth.type: oauth) open a browser at startup. The
 # After=/PartOf=graphical-session.target ordering above ensures the graphical
 # session's environment is already imported when mcpmux starts, so xdg-open has
-# a display. If your desktop does not populate the systemd --user environment,
+# a display. mcpmux launches the opener in its own transient systemd scope, so
+# this unit's cgroup kill on restart does not take the browser down with it.
+# If your desktop does not populate the systemd --user environment,
 # either run once after login:
 #   systemctl --user import-environment DISPLAY WAYLAND_DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS
 # or set `open_browser: false` on those backends and click the URL shown in
