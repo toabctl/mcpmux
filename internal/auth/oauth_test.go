@@ -286,3 +286,65 @@ func TestDetachScope(t *testing.T) {
 		t.Errorf("args = %v, want %v", args, want)
 	}
 }
+
+// TestBrowserAuthorizer_RFC9207Issuer runs a full SDK authorization-code flow
+// against a server that advertises RFC 9207 iss support (as Linear does). The
+// SDK rejects the flow unless the callback's iss reaches it.
+func TestBrowserAuthorizer_RFC9207Issuer(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/.well-known/oauth-protected-resource"):
+			_, _ = fmt.Fprintf(w, `{"resource":%q,"authorization_servers":[%q]}`, srv.URL+"/mcp", srv.URL)
+		case strings.HasPrefix(r.URL.Path, "/.well-known/oauth-authorization-server"):
+			_, _ = fmt.Fprintf(w, `{"issuer":%q,"authorization_endpoint":%q,"token_endpoint":%q,`+
+				`"registration_endpoint":%q,"response_types_supported":["code"],`+
+				`"code_challenge_methods_supported":["S256"],"authorization_response_iss_parameter_supported":true}`,
+				srv.URL, srv.URL+"/authorize", srv.URL+"/token", srv.URL+"/register")
+		case r.URL.Path == "/register":
+			w.WriteHeader(http.StatusCreated)
+			_, _ = fmt.Fprint(w, `{"client_id":"cid","redirect_uris":[]}`)
+		case r.URL.Path == "/authorize":
+			q := r.URL.Query()
+			dest := q.Get("redirect_uri") + "?code=the-code&state=" + q.Get("state") + "&iss=" + srv.URL
+			http.Redirect(w, r, dest, http.StatusFound)
+		case r.URL.Path == "/token":
+			_, _ = fmt.Fprint(w, `{"access_token":"tok","token_type":"Bearer","expires_in":3600}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ba, err := newBrowserAuthorizer(ctx, "test", 0, true, log)
+	if err != nil {
+		t.Fatalf("newBrowserAuthorizer: %v", err)
+	}
+	// Play the browser: follow the authorize URL through to the loopback callback.
+	ba.openURL = func(u string) error {
+		go func() {
+			if resp, err := http.Get(u); err == nil {
+				_ = resp.Body.Close()
+			}
+		}()
+		return nil
+	}
+	h, err := newOAuthHandler(ba, log, OAuthOptions{Label: "test"})
+	if err != nil {
+		t.Fatalf("newOAuthHandler: %v", err)
+	}
+	if err := EagerAuthorize(ctx, h, srv.URL+"/mcp", "test", log); err != nil {
+		t.Fatalf("EagerAuthorize: %v", err)
+	}
+	ts, err := h.TokenSource(ctx)
+	if err != nil || ts == nil {
+		t.Fatalf("TokenSource: %v", err)
+	}
+	if tok, err := ts.Token(); err != nil || tok.AccessToken != "tok" {
+		t.Fatalf("token = %v, %v; want access token %q", tok, err, "tok")
+	}
+}
