@@ -212,8 +212,8 @@ func (m *Mux) ConnectInBackground(ctx context.Context, backends []config.Backend
 // Retry is deliberately withheld from a backend that may open a browser: every
 // attempt takes the process-wide auth mutex (serializing all other consents),
 // rebinds the fixed callback port, and could pop a consent window the user
-// never asked for. Such a backend is skipped on failure, as before, and
-// recovered by RetryPendingNow or a restart.
+// never asked for. Such a backend is skipped on failure, as before. It is not
+// recorded, so RetryPendingNow cannot see it; only a restart recovers it.
 func (m *Mux) connectOne(ctx context.Context, bc config.Backend, opts ConnectOptions) (tools int, pending bool, err error) {
 	b, err := newBackend(bc, m.log, opts.Store)
 	if err != nil {
