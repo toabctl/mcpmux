@@ -62,7 +62,11 @@ func NewOAuthHandler(ctx context.Context, log *slog.Logger, o OAuthOptions) (sdk
 	if err != nil {
 		return nil, err
 	}
+	return newOAuthHandler(ba, log, o)
+}
 
+// newOAuthHandler builds the SDK handler around an existing authorizer.
+func newOAuthHandler(ba *browserAuthorizer, log *slog.Logger, o OAuthOptions) (sdkauth.OAuthHandler, error) {
 	cfg := &sdkauth.AuthorizationCodeHandlerConfig{
 		RedirectURL:              ba.redirect,
 		AuthorizationCodeFetcher: ba.fetch,
@@ -228,8 +232,10 @@ func clientMetadata(o OAuthOptions, redirectURI string) *oauthex.ClientRegistrat
 }
 
 // callbackResult carries the redirect parameters from the loopback handler.
+// iss is the RFC 9207 issuer; the SDK rejects the flow when the server
+// advertises iss support and it is missing.
 type callbackResult struct {
-	code, state, errMsg string
+	code, state, iss, errMsg string
 }
 
 // authMu serializes interactive (browser) authorizations across all backends.
@@ -298,7 +304,7 @@ func (a *browserAuthorizer) serveCallback(ln net.Listener) *http.Server {
 
 func (a *browserAuthorizer) handleCallback(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	res := callbackResult{code: q.Get("code"), state: q.Get("state"), errMsg: q.Get("error")}
+	res := callbackResult{code: q.Get("code"), state: q.Get("state"), iss: q.Get("iss"), errMsg: q.Get("error")}
 
 	a.mu.Lock()
 	ch := a.waiting
@@ -375,7 +381,7 @@ func (a *browserAuthorizer) await(ctx context.Context, args *sdkauth.Authorizati
 		if res.code == "" {
 			return nil, fmt.Errorf("authorization callback for %q missing code", a.label)
 		}
-		return &sdkauth.AuthorizationResult{Code: res.code, State: res.state}, nil
+		return &sdkauth.AuthorizationResult{Code: res.code, State: res.state, Iss: res.iss}, nil
 	case <-ctx.Done():
 		return nil, fmt.Errorf("authorization for %q did not complete: %w", a.label, ctx.Err())
 	}
